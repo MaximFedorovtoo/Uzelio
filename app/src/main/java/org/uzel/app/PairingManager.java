@@ -18,6 +18,7 @@ import org.uzel.app.traversal.TraversalTransport;
 final class PairingManager implements AutoCloseable {
     interface Listener { void available(Invitation peer); void unavailable(String fingerprint); }
     interface DescriptionSink { void description(String encoded); void failed(); void connected(); }
+    enum Admission { ACCEPTED, DEFERRED, REJECTED }
     private final Context context;
     private final PhysicalNetwork physical;
     private final Node node;
@@ -66,24 +67,39 @@ final class PairingManager implements AutoCloseable {
         if(fingerprint==null||!fingerprint.matches("[0-9a-f]{64}")||sink==null)return;
         acceptVerified(value,fingerprint,sink);
     }
+    /** The callback is queued before transport callbacks can publish an answer. */
+    void acceptFrom(String value,String fingerprint,DescriptionSink sink,String replaceBackground,
+                    java.util.function.BooleanSupplier current,java.util.function.Consumer<Admission> outcome){
+        acceptVerified(value,fingerprint,sink,replaceBackground,current,outcome);
+    }
     private void acceptVerified(String value,String expected,DescriptionSink sink){
-        if(value==null||value.length()>100_000){state="INVALID";return;}
+        acceptVerified(value,expected,sink,null,()->true,null);
+    }
+    private void acceptVerified(String value,String expected,DescriptionSink sink,String replaceBackground,
+                                java.util.function.BooleanSupplier current,java.util.function.Consumer<Admission> outcome){
+        if(value==null||value.length()>100_000){if(outcome!=null)outcome.accept(Admission.REJECTED);else state="INVALID";return;}
         submit(()->{
+            Pair created=null;
             try {
+                if(!current.getAsBoolean()){if(outcome!=null)outcome.accept(Admission.REJECTED);return;}
                 PairingCode verified=PairingCode.parseAndVerify(value,System.currentTimeMillis());
                 if(expected!=null&&!expected.equals(verified.fingerprint))throw new IOException("Target identity mismatch");
                 if(verified.fingerprint.equals(node.invitation("127.0.0.1").fingerprint))throw new IOException("Self pairing");
                 if("offer".equals(verified.type)){
-                    if(active.size()>=3||active.containsKey(verified.fingerprint))throw new IOException("Already paired or full");
-                    if(!replay.claim(verified,System.currentTimeMillis()))throw new IOException("Replayed offer");
+                    boolean busy=active.size()>=3||active.containsKey(verified.fingerprint);
                     if(expected!=null&&pending!=null){
+                        boolean same=expected.equals(pending.targetFingerprint);
                         String own=node.invitation("127.0.0.1").fingerprint;
-                        if(!expected.equals(pending.targetFingerprint))throw new IOException("Pairing busy");
-                        if(verified.fingerprint.compareTo(own)>=0)return;
+                        // Only an unconsumed outgoing offer participates in the deterministic collision rule.
+                        busy|=same?(pending.remote!=null||verified.fingerprint.compareTo(own)>=0):
+                                replaceBackground==null||!replaceBackground.equals(pending.targetFingerprint);
                     }
+                    if(busy){if(outcome!=null)outcome.accept(Admission.DEFERRED);else if(sink!=null)sink.failed();return;}
+                    // Temporary admission failures must never consume this one-time offer.
+                    if(!replay.claim(verified,System.currentTimeMillis()))throw new IOException("Replayed offer");
                     if(expected!=null&&pending!=null)pending.sink=null;
                     cancelPending();state="GATHERING";
-                    Pair pair=create();pair.targetFingerprint=expected;pair.sink=sink;pending=pair;pair.remote=verified;pair.offer=verified;
+                    Pair pair=create();created=pair;pair.targetFingerprint=expected;pair.sink=sink;pending=pair;pair.remote=verified;pair.offer=verified;
                     pair.deadline=Math.min(pair.deadline,verified.expiresAt);
                     register(pair);pair.transport.acceptOffer(verified.sdp);
                 }else{
@@ -92,15 +108,28 @@ final class PairingManager implements AutoCloseable {
                     if(pair.targetFingerprint!=null&&!pair.targetFingerprint.equals(verified.fingerprint))throw new IOException("Target identity mismatch");
                     if(expected!=null&&!expected.equals(pair.targetFingerprint))throw new IOException("No automatic offer");
                     PairingCode.verifyAnswer(verified,pair.offer,System.currentTimeMillis());
-                    if(active.containsKey(verified.fingerprint)||!replay.claim(verified,System.currentTimeMillis()))throw new IOException("Duplicate answer");
+                    if(active.containsKey(verified.fingerprint)){if(outcome!=null)outcome.accept(Admission.DEFERRED);return;}
+                    if(!replay.claim(verified,System.currentTimeMillis()))throw new IOException("Duplicate answer");
                     pair.consumed=true;pair.remote=verified;register(pair);
                     code="";state="CONNECTING";pair.transport.acceptAnswer(verified.sdp);
                 }
-            }catch(Exception|LinkageError failure){if(expected!=null){sink.failed();return;}diagnostic=failure.getClass().getSimpleName()+": "+failure.getMessage();state="INVALID";}
+                if(outcome!=null)outcome.accept(Admission.ACCEPTED);
+            }catch(Exception|LinkageError failure){
+                if(created!=null&&pending==created){dispose(created);pending=null;code="";state="UNAVAILABLE";}
+                if(outcome!=null){outcome.accept(Admission.REJECTED);return;}
+                if(expected!=null){sink.failed();return;}
+                diagnostic=failure.getClass().getSimpleName()+": "+failure.getMessage();state="INVALID";
+            }
         });
     }
     void cancel(){submit(()->{cancelPending();state="IDLE";});}
     void cancelTargeted(String fingerprint){submit(()->{if(pending!=null&&fingerprint.equals(pending.targetFingerprint)){cancelPending();state="IDLE";}});}
+    /** A delayed discovery callback may cancel only the admission it actually owns. */
+    void cancelTargeted(String fingerprint,DescriptionSink expectedSink){submit(()->{
+        if(pending!=null&&fingerprint.equals(pending.targetFingerprint)&&pending.sink==expectedSink){
+            cancelPending();state="IDLE";
+        }
+    });}
     private Pair create()throws Exception {
         if(identity==null)identity=DeviceIdentity.load();
         Pair pair=new Pair();

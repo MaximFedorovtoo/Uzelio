@@ -24,7 +24,7 @@ final class DirectoryContacts {
     }
     synchronized void merge(List<FederationContact> contacts){
         boolean changed=prune();
-        for(FederationContact contact:contacts)changed|=accept(contact);
+        for(FederationContact contact:contacts){changed|=accept(contact);for(FederationContact backup:contact.backups)changed|=accept(backup);}
         if(changed)save();
     }
     private boolean accept(FederationContact contact){

@@ -14,6 +14,15 @@ import java.util.concurrent.atomic.*;
 import static org.junit.Assert.*;
 
 public class DesktopDiscoveryClientTest {
+    @Test(timeout=5000) public void closeImmediatelyClearsOnlineStateAndCannotRefresh()throws Exception {
+        TlsIdentity self=identity();DesktopDiscoveryClient client=new DesktopDiscoveryClient(self.fingerprint,"https://bootstrap.example/v1/exchange",url->new Connection(url,new DiscoveryStore()),()->null,1000);
+        try{assertTrue(client.refresh().get(2,TimeUnit.SECONDS));client.close();assertEquals("NOT_STARTED",client.status().state());assertFalse(client.refresh().get(1,TimeUnit.SECONDS));}finally{client.close();}
+    }
+    @Test public void corruptContactHintsDoNotDisableConfiguredBootstrap()throws Exception {
+        TlsIdentity self=identity();Path root=Files.createTempDirectory("desktop-discovery-corrupt-hints-");
+        Files.writeString(root.resolve("discovery.properties"),"bootstrapUrl=https://bootstrap.example/v1/exchange\n");Files.write(root.resolve("discovery-contacts.bin"),new byte[]{1,2,3});
+        try(DesktopDiscoveryClient client=DesktopDiscoveryClient.configured(root,self.fingerprint)){assertEquals("NOT_STARTED",client.status().state());}
+    }
     @Test(timeout=10000) public void actualSignedCatalogShowsOtherAndroidIdentityAndExpiresWithoutInventingRoute()throws Exception {
         TlsIdentity self=identity(),phone=identity();DiscoveryStore bootstrap=new DiscoveryStore();long expiry=System.currentTimeMillis()+1500;
         bootstrap.accept(new DiscoveryIdentity(phone).presence("CA",1,9_000_000,expiry-120_000),System.currentTimeMillis());

@@ -31,6 +31,18 @@ final class AutoDiscoveryManager implements AutoCloseable {
     private final ScheduledExecutorService watchdog=Executors.newSingleThreadScheduledExecutor();
     private volatile HttpURLConnection activeRequest;
     private final Map<String,Long> handled=new LinkedHashMap<>();
+    private static final int MAX_DEFERRED_SIGNALS=128;
+    private static final class IncomingSignal {
+        final DiscoverySignal signal;final String code;final PairingCode verified;
+        IncomingSignal(DiscoverySignal signal,String code,PairingCode verified){this.signal=signal;this.code=code;this.verified=verified;}
+        String key(){return signal.senderFingerprint+":"+signal.id;}
+        long expiresAt(){return Math.min(signal.expiresAt,verified.expiresAt);}
+    }
+    // Opening an encrypted signal consumes DiscoveryIdentity's replay entry. Keep its plaintext
+    // only in this bounded memory cache until pairing admits it or its signed lifetime ends.
+    private final Map<String,IncomingSignal> deferredSignals=new LinkedHashMap<>();
+    private IncomingSignal incomingSignal;
+    private int incomingCursor;
     private volatile boolean closed,hosting;
     private volatile String url,state="STARTING",pending="";
     private final AtomicLong refreshRequests=new AtomicLong();
@@ -44,6 +56,16 @@ final class AutoDiscoveryManager implements AutoCloseable {
     private volatile BootstrapHttpServer server;
     private String ownFingerprint;
     private long publishedAt,pendingUntil,lastIncoming;
+    private long lastBootstrapAttempt,lastBackupAttempt,extendedHttpRetry;
+    private boolean backgroundPending;
+    private final Map<String,Long> legacyPeers=new HashMap<>();
+    private final Map<String,Long> backupRetryAt=new HashMap<>();
+    private final Map<String,Set<String>> ownSignals=new HashMap<>();
+    private final Map<String,Long> retiredSignals=new ConcurrentHashMap<>();
+    private volatile String lastSource="";
+    private static final class UnsupportedDiscoveryVersion extends IOException {}
+    String source(){return lastSource;}
+    int backupPeerCount(){return contacts.get().size();}
     private final AtomicLong attempts=new AtomicLong(),cancellations=new AtomicLong();
     private volatile long pendingAttempt;
     private int cursor;
@@ -66,7 +88,9 @@ final class AutoDiscoveryManager implements AutoCloseable {
         hostingAddress=bind;
         node.setDiscoveryExchange(frame->{
             if(!enabled())throw new IOException("Discovery disabled");
-            return store.exchange(frame,System.currentTimeMillis());
+            byte[] response=exchangeIncoming(frame);
+            directoryContacts.merge(store.contacts(System.currentTimeMillis()));
+            return response;
         });
         worker.scheduleWithFixedDelay(this::cycle,0,3,TimeUnit.SECONDS);
     }
@@ -92,10 +116,37 @@ final class AutoDiscoveryManager implements AutoCloseable {
     void addDirectoryContact(String code)throws IOException{directoryContacts.add(code);execute(this::cycle);}
     int directoryContactCount(){return directoryContacts.list().size();}
     void allowPrivateDirectories(boolean enabled){directoryContacts.setAllowPrivate(enabled);cancelRequest();execute(this::cycle);}
-    void cancel(String fingerprint){cancellations.incrementAndGet();if(pending.equals(fingerprint)){pending="";pendingAttempt=attempts.incrementAndGet();}pairing.cancelTargeted(fingerprint);}
-    private void paired(String fingerprint,long attempt){execute(()->{if(pending.equals(fingerprint)&&pendingAttempt==attempt){pending="";pendingUntil=0;state="ONLINE";}});}
+    private void forgetSignals(String fingerprint){
+        Set<String> ids=ownSignals.remove(fingerprint);if(ids==null)return;
+        for(DiscoverySignal signal:store.signals(System.currentTimeMillis()))if(signal.senderFingerprint.equals(ownFingerprint)&&ids.contains(signal.id)){
+            if(retiredSignals.size()>=128)retiredSignals.remove(retiredSignals.keySet().iterator().next());
+            retiredSignals.put(signal.id,signal.expiresAt);
+        }
+        store.removeSignals(ownFingerprint,ids);
+    }
+    private void removeRetiredSignals(){retiredSignals.values().removeIf(expiry->expiry<=System.currentTimeMillis());store.removeSignals(ownFingerprint,retiredSignals.keySet());}
+    private byte[] exchangeIncoming(byte[] frame)throws IOException {
+        retiredSignals.values().removeIf(expiry->expiry<=System.currentTimeMillis());
+        return exchangeFiltered(store,frame,ownFingerprint,retiredSignals.keySet(),System.currentTimeMillis());
+    }
+    static byte[] exchangeFiltered(DiscoveryStore cache,byte[] frame,String sender,Collection<String> retired,long now)throws IOException {
+        synchronized(cache){
+            cache.ingestFrame(frame,now);cache.removeSignals(sender,retired);
+            return new DataInputStream(new ByteArrayInputStream(frame)).readInt()==0x555a4432?cache.exportFrameWithContacts(now):cache.exportFrame(now);
+        }
+    }
+    void cancel(String fingerprint){cancellations.incrementAndGet();execute(()->{retireIncoming(fingerprint);if(pending.equals(fingerprint)){pending="";pendingUntil=0;backgroundPending=false;pendingAttempt=attempts.incrementAndGet();}forgetSignals(fingerprint);pairing.cancelTargeted(fingerprint);});}
+    private void retireIncoming(String fingerprint){
+        Iterator<IncomingSignal> values=deferredSignals.values().iterator();
+        while(values.hasNext()){IncomingSignal value=values.next();if(value.signal.senderFingerprint.equals(fingerprint)){remember(value.signal);values.remove();}}
+    }
+    private void paired(String fingerprint,long attempt){execute(()->{if(pending.equals(fingerprint)&&pendingAttempt==attempt){pending="";pendingUntil=0;backgroundPending=false;forgetSignals(fingerprint);state="ONLINE";}});}
     void connect(DiscoveryPresence recipient){long cancellation=cancellations.get();execute(()->{
         if(cancellation!=cancellations.get())return;
+        if(backgroundPending){
+            if(pending.equals(recipient.fingerprint)){backgroundPending=false;return;}
+            String old=pending;pending="";pendingAttempt=attempts.incrementAndGet();backgroundPending=false;forgetSignals(old);pairing.cancelTargeted(old);
+        }
         long now=System.currentTimeMillis();
         if(!enabled()||!pending.isEmpty()||recipient.expiresAt<=now||recipient.clients>=3||recipient.upload<=0){listener.failed(recipient.fingerprint);return;}
         pending=recipient.fingerprint;pendingAttempt=attempts.incrementAndGet();pendingUntil=now+180_000;state="PAIRING";
@@ -111,7 +162,8 @@ final class AutoDiscoveryManager implements AutoCloseable {
                     // record for the pinned identity; never extend an old record or reuse its key.
                     DiscoveryPresence current=currentRecipient(store,recipient.fingerprint,now);
                     store.accept(identity.presence(node.country,node.clientCount(),node.measuredUpload(),now),now);publishedAt=now;
-                    store.accept(identity.seal(current,code,now),now);cycle();
+                    DiscoverySignal signal=identity.seal(current,code,now);removeRetiredSignals();store.accept(signal,now);
+                    ownSignals.computeIfAbsent(current.fingerprint,key->new HashSet<>()).add(signal.id);cycle();
                 }
                 catch(IOException failure){AutoDiscoveryManager.this.failed(recipient.fingerprint,attempt);}
             });}
@@ -124,7 +176,7 @@ final class AutoDiscoveryManager implements AutoCloseable {
         throw new IOException("Recipient announcement unavailable");
     }
     private void failed(String fingerprint,long attempt){
-        if(pending.equals(fingerprint)&&pendingAttempt==attempt){pending="";pendingUntil=0;state="OFFLINE";listener.failed(fingerprint);}
+        if(pending.equals(fingerprint)&&pendingAttempt==attempt){boolean background=backgroundPending;pending="";pendingUntil=0;backgroundPending=false;forgetSignals(fingerprint);if(background){backupRetryAt.put(fingerprint,System.currentTimeMillis()+60_000);lastBackupAttempt=0;}else{state="OFFLINE";listener.failed(fingerprint);}}
     }
     private void cycle(){
         if(closed)return;
@@ -139,56 +191,118 @@ final class AutoDiscoveryManager implements AutoCloseable {
             }
             processSignals(now);
             boolean exchanged=false;
+            for(FederationContact contact:directoryContacts.list())store.accept(contact,now);
+            List<Invitation> peers=contacts.get();
+            for(int attempt=0;attempt<Math.min(2,peers.size())&&!closed;attempt++){
+                Invitation peer=peers.get(Math.floorMod(cursor++,peers.size()));
+                try{
+                    byte[] response;
+                    if(legacyPeers.getOrDefault(peer.fingerprint,0L)>now)response=node.exchangeDiscovery(peer,store.exportFrame(now));
+                    else try{response=node.exchangeDiscovery(peer,store.exportFrameWithContacts(now));}
+                    catch(IOException unsupported){response=node.exchangeDiscovery(peer,store.exportFrame(System.currentTimeMillis()));legacyPeers.put(peer.fingerprint,now+60_000);}
+                    if(closed)return;store.ingestFrame(response,System.currentTimeMillis());removeRetiredSignals();
+                    directoryContacts.merge(store.contacts(System.currentTimeMillis()));exchanged=true;lastSource="PEER";
+                }catch(IOException ignored){}
+            }
+            Set<String> livePeerIds=new HashSet<>();for(Invitation peer:peers)livePeerIds.add(peer.fingerprint);
+            legacyPeers.keySet().retainAll(livePeerIds);
             Map<String,FederationContact> directoryServers=new LinkedHashMap<>();
             List<String> candidates=new ArrayList<>();
             for(FederationContact contact:directoryContacts.list()){directoryServers.put(contact.fingerprint,contact);candidates.add(contact.fingerprint);}
             String endpoint=url;if(!endpoint.isEmpty())candidates.add(endpoint);
-            int tried=0;
+            int tried=0;boolean peerAvailable=exchanged;
             for(String key:failover.order(candidates,android.os.SystemClock.elapsedRealtime())){
+                if(peerAvailable && now-lastBootstrapAttempt<30_000)break;
                 if(closed||tried++>=3)break;
+                lastBootstrapAttempt=now;
                 try{
                     FederationContact contact=directoryServers.get(key);
                     byte[] response;
-                    if(contact==null)response=post(key,store.exportFrame(System.currentTimeMillis()));
+                    if(contact==null){
+                        if(now>=extendedHttpRetry)try{response=post(key,store.exportFrameWithContacts(System.currentTimeMillis()));}
+                        catch(UnsupportedDiscoveryVersion unsupported){extendedHttpRetry=now+60_000;response=post(key,store.exportFrame(System.currentTimeMillis()));}
+                        else response=post(key,store.exportFrame(System.currentTimeMillis()));
+                    }
                     else response=exchangeDirectory(contact);
-                    if(closed)return;store.ingestFrame(response,System.currentTimeMillis());
+                    if(closed)return;store.ingestFrame(response,System.currentTimeMillis());removeRetiredSignals();
+                    directoryContacts.merge(store.contacts(System.currentTimeMillis()));
+                    if(!peerAvailable)lastSource=contact==null?"BOOTSTRAP":"DIRECTORY";
                     failover.succeeded(key);exchanged=true;break;
                 }catch(IOException unavailable){failover.failed(key,android.os.SystemClock.elapsedRealtime());}
-            }
-            List<Invitation> peers=contacts.get();
-            for(int attempt=0;attempt<Math.min(2,peers.size())&&!closed;attempt++){
-                Invitation peer=peers.get(Math.floorMod(cursor++,peers.size()));
-                try{byte[] response=node.exchangeDiscovery(peer,store.exportFrame(System.currentTimeMillis()));
-                    if(closed)return;store.ingestFrame(response,System.currentTimeMillis());exchanged=true;
-                }catch(IOException ignored){}
+                if(peerAvailable)break;
             }
             if(closed)return;
             processSignals(System.currentTimeMillis());
             listener.catalog(store.presences(System.currentTimeMillis()));
-            state=!pending.isEmpty()?"PAIRING":exchanged||server!=null?"ONLINE":"OFFLINE";
+            state=!pending.isEmpty()&&!backgroundPending?"PAIRING":exchanged||server!=null?"ONLINE":"OFFLINE";
+            if(!exchanged)lastSource="";
+            if(exchanged && pending.isEmpty() && incomingSignal==null && now-lastBackupAttempt>=15_000){
+                Set<String> connected=new HashSet<>();for(Invitation peer:contacts.get())connected.add(peer.fingerprint);
+                backupRetryAt.entrySet().removeIf(e->e.getValue()<=System.currentTimeMillis());
+                DiscoveryPresence backup=BackupPeerSelector.next(ownFingerprint,store.presences(System.currentTimeMillis()),connected,System.currentTimeMillis(),backupRetryAt.keySet());
+                if(backup!=null){lastBackupAttempt=now;backgroundPending=true;pending=backup.fingerprint;pendingAttempt=attempts.incrementAndGet();pendingUntil=now+120_000;pairing.offerTo(backup.fingerprint,sink(backup,pendingAttempt));}
+            }
         }catch(Exception failure){if(!closed)state="OFFLINE";}
     }
     private void processSignals(long now)throws IOException {
         handled.entrySet().removeIf(e->e.getValue()<=now);
+        deferredSignals.values().removeIf(value->value.expiresAt()<=now);
+        if(incomingSignal!=null)return; // At most one admission queued on PairingManager's serial worker.
         Map<String,DiscoveryPresence> catalog=new HashMap<>();
         for(DiscoveryPresence value:store.presences(now))catalog.put(value.fingerprint,value);
-        for(DiscoverySignal signal:store.signalsFor(ownFingerprint,now)){
-            if(closed||!enabled()||handled.containsKey(signal.senderFingerprint+":"+signal.id))continue;
+        List<DiscoverySignal> signals=new ArrayList<>(store.signalsFor(ownFingerprint,now));
+        if(!signals.isEmpty())Collections.rotate(signals,-Math.floorMod(incomingCursor++,signals.size()));
+        for(DiscoverySignal signal:signals){
+            String key=signal.senderFingerprint+":"+signal.id;
+            if(closed||!enabled()||handled.containsKey(key))continue;
             DiscoveryPresence sender=catalog.get(signal.senderFingerprint);
             if(sender==null||sender.fingerprint.equals(ownFingerprint))continue;
-            if(!pending.isEmpty()&&!pending.equals(sender.fingerprint))continue;
+            if(!pending.isEmpty()&&!pending.equals(sender.fingerprint)&&!backgroundPending)continue;
             if(pending.isEmpty()&&now-lastIncoming<10_000)continue;
-            String code;
-            PairingCode verified;
-            try{code=identity.open(signal,now);verified=PairingCode.parseAndVerify(code,now);}
-            catch(IOException invalid){remember(signal);continue;}
-            if(!verified.fingerprint.equals(sender.fingerprint)){remember(signal);continue;}
-            if("offer".equals(verified.type)){
-                if(now-lastIncoming<10_000||(!pending.isEmpty()&&sender.fingerprint.compareTo(ownFingerprint)>=0)){remember(signal);continue;}
-                lastIncoming=now;pending=sender.fingerprint;pendingAttempt=attempts.incrementAndGet();pendingUntil=Math.min(now+180_000,verified.expiresAt);
-            }else if(!pending.equals(sender.fingerprint)){remember(signal);continue;}
-            remember(signal);state="PAIRING";
-            pairing.acceptFrom(code,sender.fingerprint,sink(sender,pendingAttempt));
+            IncomingSignal incoming=deferredSignals.get(key);
+            if(incoming==null){
+                if(deferredSignals.size()>=MAX_DEFERRED_SIGNALS)continue;
+                try{
+                    String code=identity.open(signal,now);PairingCode verified=PairingCode.parseAndVerify(code,now);
+                    if(!verified.fingerprint.equals(sender.fingerprint))throw new IOException("Signal sender identity");
+                    incoming=new IncomingSignal(signal,code,verified);deferredSignals.put(key,incoming);
+                }catch(IOException invalid){remember(signal);continue;}
+            }
+            boolean offer="offer".equals(incoming.verified.type);
+            if(offer&&now-lastIncoming<10_000)continue;
+            if(!offer&&!pending.equals(sender.fingerprint)){deferredSignals.remove(key);remember(signal);continue;}
+            final IncomingSignal request=incoming;
+            final long generation=cancellations.get(),previousAttempt=pendingAttempt;
+            final String previousPending=pending;
+            final boolean previousBackground=backgroundPending;
+            final long attempt=offer?attempts.incrementAndGet():pendingAttempt;
+            incomingSignal=request;
+            final PairingManager.DescriptionSink admissionSink=sink(sender,attempt);
+            pairing.acceptFrom(request.code,sender.fingerprint,admissionSink,previousBackground?previousPending:null,
+                    ()->!closed&&cancellations.get()==generation&&pendingAttempt==previousAttempt,
+                    result->execute(()->{
+                        if(incomingSignal!=request)return;
+                        incomingSignal=null;
+                        if(!enabled()||cancellations.get()!=generation||pendingAttempt!=previousAttempt){
+                            if(result==PairingManager.Admission.ACCEPTED)pairing.cancelTargeted(sender.fingerprint,admissionSink);
+                            return;
+                        }
+                        if(request.expiresAt()<=System.currentTimeMillis()){
+                            deferredSignals.remove(request.key());remember(request.signal);
+                            if(result==PairingManager.Admission.ACCEPTED)pairing.cancelTargeted(sender.fingerprint,admissionSink);
+                            return;
+                        }
+                        if(result==PairingManager.Admission.DEFERRED)return;
+                        deferredSignals.remove(request.key());remember(request.signal);
+                        if(result!=PairingManager.Admission.ACCEPTED)return;
+                        if(offer){
+                            if(previousBackground&&!previousPending.equals(sender.fingerprint))forgetSignals(previousPending);
+                            backgroundPending=false;lastIncoming=System.currentTimeMillis();pending=sender.fingerprint;
+                            pendingAttempt=attempt;pendingUntil=Math.min(lastIncoming+180_000,request.verified.expiresAt);
+                        }
+                        if(!backgroundPending)state="PAIRING";
+                    }));
+            return;
         }
     }
     private void remember(DiscoverySignal signal){
@@ -199,15 +313,17 @@ final class AutoDiscoveryManager implements AutoCloseable {
         HttpURLConnection connection=physical.http(endpoint);
         activeRequest=connection;
         ScheduledFuture<?> deadline=null;
-        long until=System.nanoTime()+TimeUnit.SECONDS.toNanos(20);
+        long until=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);
         try{
             if(closed)throw new InterruptedIOException("Closed");
-            deadline=watchdog.schedule(connection::disconnect,20,TimeUnit.SECONDS);
+            deadline=watchdog.schedule(connection::disconnect,5,TimeUnit.SECONDS);
             connection.setRequestMethod("POST");connection.setDoOutput(true);
             connection.setRequestProperty("Content-Type","application/octet-stream");
             connection.setFixedLengthStreamingMode(request.length);
             try(OutputStream out=connection.getOutputStream()){out.write(request);}
-            if(connection.getResponseCode()!=200)throw new IOException("Bootstrap unavailable");
+            int responseCode=connection.getResponseCode();
+            if(responseCode==400)throw new UnsupportedDiscoveryVersion();
+            if(responseCode!=200)throw new IOException("Bootstrap unavailable");
             if(connection.getContentLengthLong()>DiscoveryStore.MAX_FRAME)throw new IOException("Frame too large");
             try(InputStream in=connection.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
                 byte[] chunk=new byte[4096];int count;
@@ -236,7 +352,7 @@ final class AutoDiscoveryManager implements AutoCloseable {
             if(hostingAddress==null)throw new IOException("No physical address");
             server=new BootstrapHttpServer(hostingAddress,39282,frame->{
                 if(!enabled()||!hosting)throw new IOException("Discovery disabled");
-                return store.exchange(frame,System.currentTimeMillis());
+                return exchangeIncoming(frame);
             });
         }
     }
@@ -244,7 +360,7 @@ final class AutoDiscoveryManager implements AutoCloseable {
     private void execute(Runnable task){if(!closed)try{worker.execute(()->{if(!closed)task.run();});}catch(RejectedExecutionException ignored){}}
     @Override public void close(){
         if(closed)return;closed=true;node.setDiscoveryExchange(null);cancelRequest();watchdog.shutdown();
-        worker.execute(()->{BootstrapHttpServer old=server;server=null;if(old!=null)old.close();store.clear();handled.clear();});
+        worker.execute(()->{BootstrapHttpServer old=server;server=null;if(old!=null)old.close();store.clear();handled.clear();deferredSignals.clear();incomingSignal=null;});
         worker.shutdown();
     }
 }

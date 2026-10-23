@@ -63,6 +63,8 @@ public final class FederationBackend implements DesktopBackend {
     FederationBackend(Path root,TlsIdentity identity,DesktopTrafficService traffic,int trafficPort,ApplicationRouting router,DesktopDiscoveryClient discovery,PairingFactory pairingFactory){
         this.root=Objects.requireNonNull(root);this.identity=Objects.requireNonNull(identity);this.traffic=Objects.requireNonNull(traffic);this.router=Objects.requireNonNull(router);
         this.discovery=Objects.requireNonNull(discovery);this.discovery.setPublisher(this::ownPresence);
+        this.discovery.setFederationIdentity(identity);this.discovery.setContactPublisher(this::ownDiscoveryContact);
+        try{this.discovery.setContactFile(root.resolve("discovery-contacts.bin"));}catch(IOException invalid){backendError="Сохранённые резервные контакты недоступны";}
         this.pairingFactory=Objects.requireNonNull(pairingFactory);
         if(trafficPort<0 || trafficPort>65535)throw new IllegalArgumentException("Traffic port");this.trafficPort=trafficPort;
         try{applications=DesktopApplications.load(root);}catch(IOException invalid){backendError="Выберите приложения заново: сохранённый файл недоступен";}
@@ -73,17 +75,23 @@ public final class FederationBackend implements DesktopBackend {
     public void start(DesktopConfig config)throws Exception {
         final long epoch;
         synchronized(this){if(closed)throw new IOException("Backend closed");if(node!=null)return;configuration=config;epoch=++directoryGeneration;}
-        FederationNode candidate=new FederationNode(identity,root,InetAddress.getByName("0.0.0.0"),config.port(),config.advertisedHost(),config.allowPrivate());
+        FederationNode candidate=new FederationNode(identity,root,InetAddress.getByName("0.0.0.0"),config.port(),sharingHost(config.advertisedHost()),config.allowPrivate());
         try{
             candidate.start();synchronized(this){if(closed || epoch!=directoryGeneration)throw new InterruptedIOException("Directory start cancelled");node=candidate;candidate=null;}
             publishOwn();
-            synchronized(this){if(closed || epoch!=directoryGeneration || node==null)return;discovery.resume();}
+            synchronized(cancellationGate){
+                synchronized(this){if(closed || epoch!=directoryGeneration || node==null)return;}
+                discovery.resume();
+            }
             discovery.refresh();
         }finally{if(candidate!=null)candidate.close();}
     }
     public void stop(){
-        stopSharing();discovery.pause();final FederationNode previous;
-        synchronized(this){++directoryGeneration;previous=node;node=null;discoveredPeers.clear();}
+        stopSharing();final FederationNode previous;
+        synchronized(cancellationGate){
+            synchronized(this){++directoryGeneration;previous=node;node=null;discoveredPeers.clear();}
+            discovery.pause();
+        }
         if(previous!=null){FederationNode.Snapshot state=previous.snapshot();String error="";try{previous.close();}catch(IOException e){error="Не удалось сохранить каталог";}
             synchronized(this){if(node==null)stopped=new Snapshot(false,state.contacts.size(),0,0,state.capacityLimited,error);}}
     }
@@ -152,6 +160,7 @@ public final class FederationBackend implements DesktopBackend {
                 synchronized(cancellationGate){
                     synchronized(this){if(closed || sharingGeneration!=epoch)throw new InterruptedIOException("Sharing start cancelled");}
                     pairing=pairingFactory.create(current,identity,signalingIdentity,discovery,fingerprint->pairedTransportLost(current,epoch,fingerprint));
+                    discovery.attachPeerExchange(current,this::discoveryPeers);
                 }
                 publishOwn();discovery.refresh();
             }catch(Exception failure){stopOwnedSharing(epoch);throw failure;}
@@ -169,7 +178,14 @@ public final class FederationBackend implements DesktopBackend {
         return "127.0.0.1";
     }
     public void stopSharing(){long owner;synchronized(this){++sharingGeneration;owner=sharingOwner;advertisedHost="";}disconnect();stopOwnedSharing(owner);}
-    private void stopOwnedSharing(long owner){synchronized(cancellationGate){if(sharingOwner!=owner && sharingOwner!=0)return;sharingOwner=0;DesktopPairingManager previous=pairing;pairing=null;if(previous!=null)previous.close();traffic.stopSharing();}}
+    private void stopOwnedSharing(long owner){synchronized(cancellationGate){if(sharingOwner!=owner && sharingOwner!=0)return;sharingOwner=0;discovery.detachPeerExchange();DesktopPairingManager previous=pairing;pairing=null;if(previous!=null)previous.close();traffic.stopSharing();}}
+    private List<Invitation> discoveryPeers(){
+        LinkedHashMap<String,Invitation> invitations=new LinkedHashMap<>();DesktopPairingManager manager=pairing;
+        if(manager!=null)for(Invitation invitation:manager.invitations())invitations.put(invitation.fingerprint,invitation);
+        synchronized(this){for(Peer peer:manualPeers.values())if(peer.invitation()!=null)invitations.putIfAbsent(peer.invitation().fingerprint,peer.invitation());}
+        return invitations.values().stream().limit(3).toList();
+    }
+    int backupPeerCount(){DesktopPairingManager manager=pairing;return manager==null?0:manager.backupCount();}
     public void measureUpload()throws Exception {
         operations.lock();try{disconnect();traffic.remeasure();publishOwn();}finally{operations.unlock();}
     }
@@ -270,6 +286,7 @@ public final class FederationBackend implements DesktopBackend {
             long established;synchronized(this){if(closed)return;established=establishedConnection;}
             if(established!=0 && (!router.snapshot().active() || !traffic.snapshot().connected()))cancelOwnedConnection(established);
             boolean running;synchronized(this){running=node!=null;}if(running)discovery.refreshIfDue();
+            DesktopPairingManager manager=pairing;if(manager!=null && connectionOwner==0)manager.maintainBackups();
             if(System.currentTimeMillis()-lastPublication>=30_000)publishOwn();
         }catch(Exception ignored){}
     }
@@ -293,6 +310,10 @@ public final class FederationBackend implements DesktopBackend {
             if(discoveryIdentity==null)discoveryIdentity=new DiscoveryIdentity(identity);
             return discoveryIdentity.presence(state.country(),state.clients(),state.measuredUpload(),System.currentTimeMillis());
         }
+    }
+    private FederationContact ownDiscoveryContact()throws IOException {
+        FederationNode current;synchronized(this){if(closed)return null;current=node;}
+        return current==null?null:current.ownContact();
     }
     public void close(){synchronized(this){if(closed)return;closed=true;}maintenance.shutdownNow();stop();discovery.close();traffic.close();router.close();}
 }

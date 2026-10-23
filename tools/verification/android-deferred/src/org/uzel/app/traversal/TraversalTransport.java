@@ -1,0 +1,3 @@
+package org.uzel.app.traversal;
+import java.io.*;import java.net.*;import java.util.concurrent.atomic.AtomicInteger;
+public final class TraversalTransport {public interface Listener{void description(String t,String s);void state(String s);void failed(String s);}public static final AtomicInteger accepted=new AtomicInteger();public TraversalTransport(android.content.Context c,Object n,int p,Listener l){}public void createOffer(){}public void acceptOffer(String s){accepted.incrementAndGet();}public void acceptAnswer(String s){}public Socket openStream()throws IOException{throw new IOException("fixture");}public void close(){}}

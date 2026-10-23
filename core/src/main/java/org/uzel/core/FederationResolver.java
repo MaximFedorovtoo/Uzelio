@@ -8,7 +8,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 /** A process-wide instance bounds native DNS work even when the platform resolver ignores interrupts. */
-final class FederationResolver implements AutoCloseable {
+public final class FederationResolver implements AutoCloseable {
+ private static final class PublicResolver {private static final FederationResolver INSTANCE=new FederationResolver();}
+ /** Resolve a public endpoint with bounded shared DNS workers and an absolute wall-clock deadline. */
+ public static InetSocketAddress resolvePublic(FederationContact contact,long deadline)throws IOException {
+  return PublicResolver.INSTANCE.resolve(contact,false,deadline);
+ }
  private final ThreadPoolExecutor workers;
  private final Function<String,InetAddress[]> lookup;
  FederationResolver() {this(host->{try{return InetAddress.getAllByName(host);}catch(UnknownHostException e){throw new UncheckedIOException(e);}});}
