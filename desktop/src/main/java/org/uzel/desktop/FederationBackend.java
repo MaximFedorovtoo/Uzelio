@@ -254,8 +254,15 @@ public final class FederationBackend implements DesktopBackend {
         }
     }
     public String pairingState(){DesktopPairingManager manager=pairing;return manager==null?"OFF":manager.state();}
-    /** A live paired transport's chat stream, or null when no P2P session exists. */
-    public Socket openChatStream(String fingerprint)throws IOException {DesktopPairingManager manager=pairing;return manager==null?null:manager.openChatStream(fingerprint);}
+    /** A live paired transport's chat stream; without one, asks the catalog pairing to connect. */
+    public Socket openChatStream(String fingerprint)throws IOException {
+        DesktopPairingManager manager=pairing;
+        if(manager==null)return null;
+        Socket live=manager.openChatStream(fingerprint);
+        if(live!=null)return live;
+        manager.requestChatSession(fingerprint);
+        return null;
+    }
     private void cancelOwnedConnection(long owner){
         synchronized(cancellationGate){
             if(connectionOwner!=owner && connectionOwner!=0)return;connectionOwner=0;

@@ -416,10 +416,19 @@ public final class NodeController {
         });
     }
     public void createPairing(){PairingManager owner=pairing;if(owner!=null&&!busy)owner.offer();}
-    /** A live paired transport's chat stream, or null when this identity has no P2P session. */
-    public Socket openChatStream(String fingerprint)throws IOException {
+    /** A live paired chat stream; without one, asks the catalog discovery to pair this device. */
+    public synchronized Socket openChatStream(String fingerprint)throws IOException {
         PairingManager owner=pairing;
-        return owner==null?null:owner.openChatStream(fingerprint);
+        if(owner==null)return null;
+        Socket live=owner.openChatStream(fingerprint);
+        if(live!=null)return live;
+        AutoDiscoveryManager manager=automatic;
+        Peer peer=peers.get(fingerprint);
+        if(manager!=null&&peer!=null&&peer.presence!=null&&!manager.isPairing()
+                &&peer.presence.expiresAt>System.currentTimeMillis()){
+            manager.connect(peer.presence);
+        }
+        return null;
     }
     public void acceptPairing(String value){PairingManager owner=pairing;if(owner!=null&&!busy)owner.accept(value);}
     public void cancelPairing(){PairingManager owner=pairing;if(owner!=null)owner.cancel();}

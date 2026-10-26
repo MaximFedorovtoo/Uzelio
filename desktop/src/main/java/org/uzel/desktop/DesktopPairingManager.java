@@ -192,6 +192,20 @@ final class DesktopPairingManager implements AutoCloseable {
         if(pair==null||pair.disposed||pair.transport==null||!pair.transport.isConnected())return null;
         try{return pair.transport.openChatStream();}catch(IOException unavailable){return null;}
     }
+    /**
+     * A chat contact may exist without a sharing session. If the device is announced in the
+     * catalog, ask the same signed pairing handshake to open one; delivery retries later.
+     */
+    void requestChatSession(String fingerprint){
+        if(fingerprint==null||!fingerprint.matches("[0-9a-f]{64}"))return;
+        submit(()->{
+            if(closed||active.containsKey(fingerprint))return;
+            DiscoveryPresence presence=discovery.presence(fingerprint);
+            if(presence==null||presence.expiresAt<=System.currentTimeMillis())return;
+            if(pending!=null&&!fingerprint.equals(pending.target))return;
+            connect(presence,true).exceptionally(error->null);
+        });
+    }
     private void fail(Pair pair,String message){if(pair.disposed)return;if(pending==pair)pending=null;if(!closed)setStage(pair,"FAILED");dispose(pair,message);}
     private void dispose(Pair pair,String message){if(pair.disposed)return;pair.completion.completeExceptionally(new IOException(message));disposeTransport(pair,true);}
     private void disposeTransport(Pair pair,boolean notify){

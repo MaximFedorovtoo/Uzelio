@@ -100,6 +100,23 @@ public class DesktopPairingManagerTest {
         }
     }
     private static CompletableFuture<Invitation> backup(DesktopPairingManager manager,DiscoveryPresence recipient){return manager.connectBackup(recipient);}
+    @Test(timeout=15000) public void chatRequestWithoutLiveSessionInitiatesCatalogPairing()throws Exception {
+        try(Fixture f=new Fixture()){
+            assertNull("no session before the request",f.manager.openChatStream(f.phoneIdentity.fingerprint));
+            f.manager.requestChatSession(f.phoneIdentity.fingerprint);
+            f.client.refresh().get(2,TimeUnit.SECONDS);
+            await(()->f.fake.get()!=null);
+            assertTrue("a catalog device must start the signed pairing handshake",f.fake.get()!=null);
+        }
+    }
+    @Test(timeout=15000) public void chatRequestForUnknownDeviceDoesNothing()throws Exception {
+        try(Fixture f=new Fixture()){
+            TlsIdentity stranger=identity();
+            f.manager.requestChatSession(stranger.fingerprint);
+            Thread.sleep(300);
+            assertNull("no catalog presence means no attempt",f.fake.get());
+        }
+    }
     @Test(timeout=120000) public void nativeAutomaticManagersExchangeEncryptedSdpAndCarryActualPinnedTlsTcp()throws Exception {
         org.junit.Assume.assumeTrue(System.getProperty("os.name","").startsWith("Windows"));
         TlsIdentity a=identity(),b=identity();DiscoveryIdentity da=new DiscoveryIdentity(a),db=new DiscoveryIdentity(b);DiscoveryStore bootstrap=new DiscoveryStore();
