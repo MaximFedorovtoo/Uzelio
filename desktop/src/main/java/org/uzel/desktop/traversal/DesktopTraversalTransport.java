@@ -8,6 +8,7 @@ import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
+import java.util.regex.Pattern;
 import dev.onvoid.webrtc.*;
 import dev.onvoid.webrtc.media.audio.HeadlessAudioDeviceModule;
 
@@ -21,8 +22,13 @@ public final class DesktopTraversalTransport implements AutoCloseable {
     }
     public static final int MAX_STREAMS=24,MAX_MESSAGE=16*1024;
     private static final int WINDOW=96*1024,MAX_SDP=128*1024;
+    // Exactly one canonical label per stream kind: a strict UUID suffix and nothing else.
+    private static final String STREAM_PREFIX="uzel.stream.v1.",CHAT_PREFIX="uzel.chat.v1.";
+    private static final String UUID_TEXT="[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+    private static final Pattern STREAM_LABEL=Pattern.compile(STREAM_PREFIX+UUID_TEXT),CHAT_LABEL=Pattern.compile(CHAT_PREFIX+UUID_TEXT);
     private final Listener listener;
     private final int nodePort;
+    private final int chatPort;
     private final AtomicBoolean closed=new AtomicBoolean();
     private final CompletableFuture<Void> cleanup=new CompletableFuture<>();
     private final AtomicReference<Thread> controlThread=new AtomicReference<>();
@@ -45,8 +51,12 @@ public final class DesktopTraversalTransport implements AutoCloseable {
 
     private final HeadlessAudioDeviceModule audio;
     public DesktopTraversalTransport(int localNodePort,Listener listener)throws IOException {
-        if(listener==null||localNodePort<1||localNodePort>65535)throw new IllegalArgumentException("Traversal arguments");
-        this.listener=listener;nodePort=localNodePort;
+        this(localNodePort,0,listener);
+    }
+    /** chatPort routes uzel.chat.v1 streams to the chat TLS listener; 0 disables them. */
+    public DesktopTraversalTransport(int localNodePort,int chatPort,Listener listener)throws IOException {
+        if(listener==null||localNodePort<1||localNodePort>65535||chatPort<0||chatPort>65535)throw new IllegalArgumentException("Traversal arguments");
+        this.listener=listener;nodePort=localNodePort;this.chatPort=chatPort;
         HeadlessAudioDeviceModule module=null;PeerConnectionFactory created=null;RTCPeerConnection connection=null;
         try {
             // Java's default route may use a VPN while native ICE excludes VPN adapters.
@@ -143,6 +153,14 @@ public final class DesktopTraversalTransport implements AutoCloseable {
 
     /** Returns a genuine connected TCP socket: suitable for Android Conscrypt createSocket. */
     public Socket openStream()throws IOException {
+        return openLabeled(STREAM_PREFIX);
+    }
+    /** Chat traffic rides the same carrier but terminates at its own loopback TLS listener. */
+    public Socket openChatStream()throws IOException {
+        if(chatPort<1)throw new IOException("Chat traversal is not configured");
+        return openLabeled(CHAT_PREFIX);
+    }
+    private Socket openLabeled(String prefix)throws IOException {
         return call(()->{
             if(!isConnected())throw new IOException("Traversal not connected");
             if(bridges.size()>=MAX_STREAMS)throw new IOException("Too many traversal streams");
@@ -151,19 +169,23 @@ public final class DesktopTraversalTransport implements AutoCloseable {
                 local.setSoTimeout(2000);caller=new Socket();caller.connect(new InetSocketAddress("127.0.0.1",local.getLocalPort()),2000);
                 for(int i=0;i<4;i++){Socket candidate=local.accept();if(candidate.getPort()==caller.getLocalPort()){accepted=candidate;break;}candidate.close();}
                 if(accepted==null)throw new IOException("Loopback socket mismatch");
-                String label="uzel.stream.v1."+UUID.randomUUID();channel=peer.createDataChannel(label,reliable());
+                String label=prefix+UUID.randomUUID();channel=peer.createDataChannel(label,reliable());
                 if(channel==null)throw new IOException("Data channel creation failed");
                 Bridge bridge=new Bridge(label,channel,accepted);bridges.put(label,bridge);bridge.start();return caller;
             }catch(Exception failure){closeSocket(caller);closeSocket(accepted);if(channel!=null){channel.close();channel.dispose();}throw failure;}
         });
     }
     private void incoming(RTCDataChannel channel){
-        String name=channel.getLabel();
+        String name=channel.getLabel();int selected;
         if("uzel.control.v1".equals(name)&&!incomingBootstrap){incomingBootstrap=true;observeBootstrap(channel);return;}
-        if(!name.matches("uzel\\.stream\\.v1\\.[0-9a-f-]{36}")||bridges.size()>=MAX_STREAMS||bridges.containsKey(name)) {channel.close();channel.dispose();return;}
+        if(STREAM_LABEL.matcher(name).matches())selected=nodePort;
+        else if(chatPort>0&&CHAT_LABEL.matcher(name).matches())selected=chatPort;
+        else {channel.close();channel.dispose();return;}
+        if(bridges.size()>=MAX_STREAMS||bridges.containsKey(name)){channel.close();channel.dispose();return;}
         Bridge bridge=new Bridge(name,channel,null);bridges.put(name,bridge);
+        final int targetPort=selected;
         try{io.execute(()->{Socket target=new Socket();try{
-            target.connect(new InetSocketAddress("127.0.0.1",nodePort),3000);
+            target.connect(new InetSocketAddress("127.0.0.1",targetPort),3000);
             synchronized(bridge.gate){if(bridge.stopped.get()){target.close();return;}bridge.socket=target;}bridge.start();
         }catch(Exception failure){closeSocket(target);bridge.close();}});}catch(RejectedExecutionException full){bridge.close();}
     }

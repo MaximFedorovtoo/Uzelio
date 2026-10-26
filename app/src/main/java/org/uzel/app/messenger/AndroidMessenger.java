@@ -2,9 +2,12 @@ package org.uzel.app.messenger;
 import android.content.Context;
 import org.uzel.messenger.MessengerRuntime;
 import org.uzel.messenger.chat.ChatService;
+import org.uzel.messenger.chat.ChatTransport;
+import org.uzel.app.NodeController;
 import org.uzel.app.UzelioApplication;
 import org.uzel.app.DeviceIdentity;
 import org.uzel.core.NetworkAccess;
+import org.uzel.core.TlsIdentity;
 import android.net.*;
 import java.net.*;
 import java.io.IOException;
@@ -19,7 +22,12 @@ public final class AndroidMessenger {
     public static synchronized CompletableFuture<ChatService> chats(Context context){
         Context app=context.getApplicationContext();
         if(chats==null||chats.isCompletedExceptionally())chats=((UzelioApplication)app).messenger().thenApplyAsync(runtime->{try{
-            return new ChatService(runtime,DeviceIdentity.load(),physicalNetwork(app),InetAddress.getByName("0.0.0.0"),39283);
+            TlsIdentity identity=DeviceIdentity.load();
+            NetworkAccess network=physicalNetwork(app);
+            ChatTransport.Factory factory=(authorizer,receiver)->new AndroidChatTransport(identity,
+                    ChatTransport.pinned(identity,network,InetAddress.getByName("0.0.0.0"),39283,authorizer,receiver),
+                    fingerprint->NodeController.get(app).openChatStream(fingerprint));
+            return new ChatService(runtime,identity,factory,network);
         }catch(Exception e){throw new CompletionException(e);}});
         return chats;
     }

@@ -2,8 +2,9 @@ package org.uzel.app;
 
 import android.content.Context;
 import java.io.IOException;
-import java.util.HashMap;
+import java.net.Socket;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -25,7 +26,7 @@ final class PairingManager implements AutoCloseable {
     private final Listener listener;
     private final ExecutorService serial=Executors.newSingleThreadExecutor();
     private final ScheduledExecutorService timer=Executors.newSingleThreadScheduledExecutor();
-    private final Map<String,Pair> active=new HashMap<>();
+    private final Map<String,Pair> active=new ConcurrentHashMap<>();
     private final PairingCode.ReplayWindow replay=new PairingCode.ReplayWindow();
     private volatile boolean closed;
     private volatile String state="IDLE",code="",diagnostic="";
@@ -133,7 +134,7 @@ final class PairingManager implements AutoCloseable {
     private Pair create()throws Exception {
         if(identity==null)identity=DeviceIdentity.load();
         Pair pair=new Pair();
-        pair.transport=new TraversalTransport(context,physical.network,node.port(),new TraversalTransport.Listener(){
+        pair.transport=new TraversalTransport(context,physical.network,node.port(),39283,new TraversalTransport.Listener(){
             public void description(String type,String sdp){submit(()->{
                 if(closed||pair.disposed||pending!=pair)return;
                 try {
@@ -166,6 +167,13 @@ final class PairingManager implements AutoCloseable {
             });}
         });
         return pair;
+    }
+    /** A live paired transport's chat stream, or null when this identity has no P2P session. */
+    Socket openChatStream(String fingerprint)throws IOException {
+        if(fingerprint==null||!fingerprint.matches("[0-9a-f]{64}"))return null;
+        Pair pair=active.get(fingerprint);
+        if(pair==null||pair.disposed||pair.transport==null||!pair.transport.isConnected())return null;
+        return pair.transport.openChatStream();
     }
     private void register(Pair pair)throws IOException {
         pair.registration=node.registerPeerTransport(pair.remote.fingerprint,pair.transport::openStream,pair.localToken);

@@ -416,6 +416,11 @@ public final class NodeController {
         });
     }
     public void createPairing(){PairingManager owner=pairing;if(owner!=null&&!busy)owner.offer();}
+    /** A live paired transport's chat stream, or null when this identity has no P2P session. */
+    public Socket openChatStream(String fingerprint)throws IOException {
+        PairingManager owner=pairing;
+        return owner==null?null:owner.openChatStream(fingerprint);
+    }
     public void acceptPairing(String value){PairingManager owner=pairing;if(owner!=null&&!busy)owner.accept(value);}
     public void cancelPairing(){PairingManager owner=pairing;if(owner!=null)owner.cancel();}
     private void addPeer(Invitation invite){

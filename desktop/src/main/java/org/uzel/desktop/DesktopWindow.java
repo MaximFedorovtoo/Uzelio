@@ -51,6 +51,7 @@ final class DesktopWindow extends JPanel {
     private TrayIcon tray;
     private final javax.swing.Timer timer;
     DesktopWindow(Path root,DesktopBackend backend) {
+        org.uzel.desktop.messenger.DesktopMessenger.useChatStreams(backend::openChatStream);
         this.root=root;this.backend=backend;state=backend.snapshot();traffic=backend.traffic();
         setLayout(new BorderLayout());setBackground(BG);header.setPreferredSize(new Dimension(520,78));add(header,BorderLayout.NORTH);
         JButton headerAction=transparentButton();headerAction.getAccessibleContext().setAccessibleName("Настройки или назад");headerAction.addActionListener(e->showTab((tab==0||tab==4)?3:0));header.add(headerAction);

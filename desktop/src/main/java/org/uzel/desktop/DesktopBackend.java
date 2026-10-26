@@ -22,6 +22,8 @@ public interface DesktopBackend extends AutoCloseable {
     boolean canConnect(String fingerprint);
     default boolean hasTrafficRoute(String fingerprint){return false;}
     default String pairingState(){return "OFF";}
+    /** A live paired chat stream for this fingerprint, or null when no P2P session exists. */
+    default java.net.Socket openChatStream(String fingerprint)throws java.io.IOException {return null;}
     void connect(String fingerprint)throws Exception;
     void disconnect();
     java.util.List<java.nio.file.Path> selectedApplications();

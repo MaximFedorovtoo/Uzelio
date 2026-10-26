@@ -1,6 +1,7 @@
 package org.uzel.desktop;
 
 import org.uzel.core.*;
+import org.uzel.desktop.messenger.DesktopMessenger;
 import org.uzel.desktop.traversal.DesktopTraversalTransport;
 import java.io.*;
 import java.net.Socket;
@@ -13,13 +14,14 @@ final class DesktopPairingManager implements AutoCloseable {
     private static final long BACKUP_TIMEOUT_MILLIS=120_000;
     interface Listener {void unavailable(String fingerprint);}
     interface TransportListener {void description(String type,String sdp);void state(String state);void failed(String reason);}
-    interface Transport extends AutoCloseable {void createOffer();void acceptOffer(String sdp);void acceptAnswer(String sdp);boolean isConnected();Socket openStream()throws IOException;void close();}
+    interface Transport extends AutoCloseable {void createOffer();void acceptOffer(String sdp);void acceptAnswer(String sdp);boolean isConnected();Socket openStream()throws IOException;default Socket openChatStream()throws IOException{return null;}void close();}
     @FunctionalInterface interface TransportFactory {Transport create(int port,TransportListener listener)throws IOException;}
     private static Transport nativeTransport(int port,TransportListener listener)throws IOException {
-        DesktopTraversalTransport delegate=new DesktopTraversalTransport(port,new DesktopTraversalTransport.Listener(){
+        // Chat streams bridge to the desktop's fixed chat TLS listener, never to the VPN node port.
+        DesktopTraversalTransport delegate=new DesktopTraversalTransport(port,DesktopMessenger.CHAT_PORT,new DesktopTraversalTransport.Listener(){
             public void description(String type,String sdp){listener.description(type,sdp);}public void state(String state){listener.state(state);}public void failed(String reason){listener.failed(reason);}
         });
-        return new Transport(){public void createOffer(){delegate.createOffer();}public void acceptOffer(String sdp){delegate.acceptOffer(sdp);}public void acceptAnswer(String sdp){delegate.acceptAnswer(sdp);}public boolean isConnected(){return delegate.isConnected();}public Socket openStream()throws IOException{return delegate.openStream();}public void close(){delegate.close();}};
+        return new Transport(){public void createOffer(){delegate.createOffer();}public void acceptOffer(String sdp){delegate.acceptOffer(sdp);}public void acceptAnswer(String sdp){delegate.acceptAnswer(sdp);}public boolean isConnected(){return delegate.isConnected();}public Socket openStream()throws IOException{return delegate.openStream();}public Socket openChatStream()throws IOException{return delegate.openChatStream();}public void close(){delegate.close();}};
     }
     private final Node node;
     private final TlsIdentity identity;
@@ -30,7 +32,7 @@ final class DesktopPairingManager implements AutoCloseable {
     private final long timeoutMillis;
     private final ExecutorService serial=Executors.newSingleThreadExecutor(task->{Thread thread=new Thread(task,"uzelio-automatic-pairing");thread.setDaemon(true);return thread;});
     private final ScheduledExecutorService timer=Executors.newSingleThreadScheduledExecutor(task->{Thread thread=new Thread(task,"uzelio-pairing-deadline");thread.setDaemon(true);return thread;});
-    private final Map<String,Pair> active=new HashMap<>();
+    private final Map<String,Pair> active=new ConcurrentHashMap<>();
     private final ConcurrentMap<String,Invitation> invitations=new ConcurrentHashMap<>();
     private final Map<String,Long> handled=new LinkedHashMap<>();
     private final Map<String,DeferredSignal> deferred=new LinkedHashMap<>();
@@ -183,6 +185,13 @@ final class DesktopPairingManager implements AutoCloseable {
         return Acceptance.ACCEPTED;
     }
     private void register(Pair pair)throws IOException {pair.registration=node.registerPeerTransport(pair.remote.fingerprint,pair.transport::openStream,pair.token);}
+    /** A live paired transport's chat stream, or null when this identity has no P2P session. */
+    Socket openChatStream(String fingerprint){
+        if(fingerprint==null||!fingerprint.matches("[0-9a-f]{64}"))return null;
+        Pair pair=active.get(fingerprint);
+        if(pair==null||pair.disposed||pair.transport==null||!pair.transport.isConnected())return null;
+        try{return pair.transport.openChatStream();}catch(IOException unavailable){return null;}
+    }
     private void fail(Pair pair,String message){if(pair.disposed)return;if(pending==pair)pending=null;if(!closed)setStage(pair,"FAILED");dispose(pair,message);}
     private void dispose(Pair pair,String message){if(pair.disposed)return;pair.completion.completeExceptionally(new IOException(message));disposeTransport(pair,true);}
     private void disposeTransport(Pair pair,boolean notify){

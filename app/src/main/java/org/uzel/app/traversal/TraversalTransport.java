@@ -27,7 +27,7 @@ public final class TraversalTransport implements AutoCloseable {
     private static Network activeNetwork;
     private static int owners;
     private final Listener listener;
-    private final int nodePort;
+    private final int nodePort,chatPort;
     private final AtomicBoolean closed=new AtomicBoolean();
     private final CompletableFuture<Void> cleanup=new CompletableFuture<>();
     private final AtomicReference<Thread> controlThread=new AtomicReference<>();
@@ -49,8 +49,12 @@ public final class TraversalTransport implements AutoCloseable {
     private boolean descriptionSent,incomingBootstrap;
 
     public TraversalTransport(Context context,Network physical,int localNodePort,Listener listener)throws IOException {
-        if(context==null||physical==null||listener==null||localNodePort<1||localNodePort>65535)throw new IllegalArgumentException("Traversal arguments");
-        this.listener=listener;nodePort=localNodePort;
+        this(context,physical,localNodePort,0,listener);
+    }
+    /** chatPort is the loopback TLS chat listener; 0 keeps chat labels disabled. */
+    public TraversalTransport(Context context,Network physical,int localNodePort,int chatPort,Listener listener)throws IOException {
+        if(context==null||physical==null||listener==null||localNodePort<1||localNodePort>65535||chatPort<0||chatPort>65535)throw new IllegalArgumentException("Traversal arguments");
+        this.listener=listener;nodePort=localNodePort;this.chatPort=chatPort;
         ConnectivityManager manager=context.getSystemService(ConnectivityManager.class);
         NetworkCapabilities caps=manager.getNetworkCapabilities(physical);
         if(caps==null||caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN))throw new IOException("Physical network required");
@@ -167,6 +171,14 @@ public final class TraversalTransport implements AutoCloseable {
 
     /** Returns a genuine connected TCP socket: suitable for Android Conscrypt createSocket. */
     public Socket openStream()throws IOException {
+        return openLabeled("uzel.stream.v1.");
+    }
+    /** Chat traffic rides the same carrier but terminates at its own loopback TLS listener. */
+    public Socket openChatStream()throws IOException {
+        if(chatPort<1)throw new IOException("Chat traversal is not configured");
+        return openLabeled("uzel.chat.v1.");
+    }
+    private Socket openLabeled(String prefix)throws IOException {
         return call(()->{
             if(!isConnected())throw new IOException("Traversal not connected");
             if(bridges.size()>=MAX_STREAMS)throw new IOException("Too many traversal streams");
@@ -175,19 +187,22 @@ public final class TraversalTransport implements AutoCloseable {
                 local.setSoTimeout(2000);caller=new Socket();caller.connect(new InetSocketAddress("127.0.0.1",local.getLocalPort()),2000);
                 for(int i=0;i<4;i++){Socket candidate=local.accept();if(candidate.getPort()==caller.getLocalPort()){accepted=candidate;break;}candidate.close();}
                 if(accepted==null)throw new IOException("Loopback socket mismatch");
-                String label="uzel.stream.v1."+UUID.randomUUID();channel=peer.createDataChannel(label,reliable());
+                String label=prefix+UUID.randomUUID();channel=peer.createDataChannel(label,reliable());
                 if(channel==null)throw new IOException("Data channel creation failed");
                 Bridge bridge=new Bridge(label,channel,accepted);bridges.put(label,bridge);bridge.start();return caller;
             }catch(Exception failure){closeSocket(caller);closeSocket(accepted);if(channel!=null){channel.close();channel.dispose();}throw failure;}
         });
     }
     private void incoming(DataChannel channel){
-        String name=channel.label();
+        String name=channel.label();int selected;
         if("uzel.control.v1".equals(name)&&!incomingBootstrap){incomingBootstrap=true;observeBootstrap(channel);return;}
-        if(!name.matches("uzel\\.stream\\.v1\\.[0-9a-f-]{36}")||bridges.size()>=MAX_STREAMS||bridges.containsKey(name)) {channel.close();channel.dispose();return;}
-        Bridge bridge=new Bridge(name,channel,null);bridges.put(name,bridge);
+        if(name.matches("uzel\\.stream\\.v1\\.[0-9a-f-]{36}"))selected=nodePort;
+        else if(name.matches("uzel\\.chat\\.v1\\.[0-9a-f-]{36}")&&chatPort>0)selected=chatPort;
+        else {channel.close();channel.dispose();return;}
+        if(bridges.size()>=MAX_STREAMS||bridges.containsKey(name)){channel.close();channel.dispose();return;}
+        Bridge bridge=new Bridge(name,channel,null);bridges.put(name,bridge);final int targetPort=selected;
         try{io.execute(()->{Socket target=new Socket();try{
-            target.connect(new InetSocketAddress("127.0.0.1",nodePort),3000);
+            target.connect(new InetSocketAddress("127.0.0.1",targetPort),3000);
             synchronized(bridge.gate){if(bridge.stopped.get()){target.close();return;}bridge.socket=target;}bridge.start();
         }catch(Exception failure){closeSocket(target);bridge.close();}});}catch(RejectedExecutionException full){bridge.close();}
     }
