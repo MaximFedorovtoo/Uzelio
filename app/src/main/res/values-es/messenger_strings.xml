@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_title">Chats</string>
+    <string name="chat_add">Añadir contacto</string>
+    <string name="chat_invite">Mi invitación</string>
+    <string name="chat_search">Buscar contactos</string>
+    <string name="chat_empty">Aún no hay chats. Añade un contacto con su invitación.</string>
+    <string name="chat_not_found">No se encontraron contactos. Prueba con otro nombre.</string>
+    <string name="chat_select">Selecciona un contacto para iniciar una conversación</string>
+    <string name="chat_history_empty">Aún no hay mensajes</string>
+    <string name="chat_message">Mensaje</string>
+    <string name="chat_send">Enviar</string>
+    <string name="chat_back">Volver a los chats</string>
+    <string name="chat_retry">Reintentar conexión</string>
+    <string name="chat_loading">Abriendo el almacenamiento cifrado de mensajes…</string>
+    <string name="chat_error">Chats no disponibles. Vuelve a intentarlo tras desbloquear el dispositivo.</string>
+    <string name="chat_name">Nombre visible</string>
+    <string name="chat_code">Código de invitación</string>
+    <string name="chat_host">Dirección accesible para tu contacto</string>
+    <string name="chat_host_hint">Por ejemplo, 192.168.1.20</string>
+    <string name="chat_invite_notice">Usa un canal de confianza. Crea una invitación nueva para cada contacto. No reutilices los códigos. Una dirección detrás de NAT no queda accesible automáticamente.</string>
+    <string name="chat_port">Puerto local de escucha: %1$d</string>
+    <string name="chat_generate">Crear invitación</string>
+    <string name="chat_copy">Copiar código</string>
+    <string name="chat_copied">Código copiado</string>
+    <string name="chat_cancel">Cancelar</string>
+    <string name="chat_queued">En espera de envío</string>
+    <string name="chat_sent">Enviado</string>
+    <string name="chat_delivered">Entregado</string>
+    <string name="chat_private">Conversación personal · cifrado de extremo a extremo</string>
+    <string name="chat_waiting">La entrega requiere conexión entre tus dispositivos. El historial permanece en los dispositivos de los participantes.</string>
+    <string name="chat_action_error">Revisa la invitación, el nombre o la dirección y vuelve a intentarlo.</string>
+    <string name="chat_verify_title">Verificación del contacto</string>
+    <string name="chat_verify_notice">Antes de añadir el contacto, compara el código de seguridad por otro canal de confianza.</string>
+    <string name="chat_match">Los códigos coinciden — añadir</string>
+    <string name="chat_safety">Código de seguridad: %1$s</string>
+    <string name="chat_personal">Conversación personal</string>
+    <string name="chat_storage">Tus conversaciones permanecen contigo. El historial solo se guarda en los dispositivos de los participantes.</string>
+</resources>

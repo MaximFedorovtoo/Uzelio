@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_title">Chats</string>
+    <string name="chat_add">Add contact</string>
+    <string name="chat_invite">My invitation</string>
+    <string name="chat_search">Search contacts</string>
+    <string name="chat_empty">No chats yet. Add a contact using their invitation.</string>
+    <string name="chat_not_found">No contacts found. Try another name.</string>
+    <string name="chat_select">Select a contact to start a conversation</string>
+    <string name="chat_history_empty">No messages yet</string>
+    <string name="chat_message">Message</string>
+    <string name="chat_send">Send</string>
+    <string name="chat_back">Back to chats</string>
+    <string name="chat_retry">Retry connection</string>
+    <string name="chat_loading">Opening encrypted message storage…</string>
+    <string name="chat_error">Chats unavailable. Retry after unlocking your device.</string>
+    <string name="chat_name">Display name</string>
+    <string name="chat_code">Invitation code</string>
+    <string name="chat_host">Address reachable by your contact</string>
+    <string name="chat_host_hint">For example, 192.168.1.20</string>
+    <string name="chat_invite_notice">Use a trusted channel. Share a fresh invitation with each contact. Do not reuse codes. An address behind NAT is not automatically reachable.</string>
+    <string name="chat_port">Local listening port: %1$d</string>
+    <string name="chat_generate">Create invitation</string>
+    <string name="chat_copy">Copy code</string>
+    <string name="chat_copied">Code copied</string>
+    <string name="chat_cancel">Cancel</string>
+    <string name="chat_queued">Waiting to send</string>
+    <string name="chat_sent">Sent</string>
+    <string name="chat_delivered">Delivered</string>
+    <string name="chat_private">Personal conversation · end-to-end encryption</string>
+    <string name="chat_waiting">Delivery requires a connection between your devices. History stays on participants’ devices.</string>
+    <string name="chat_action_error">Check the invitation, name or address, then retry.</string>
+    <string name="chat_verify_title">Contact verification</string>
+    <string name="chat_verify_notice">Compare the safety code through a separate trusted channel before adding this contact.</string>
+    <string name="chat_match">Codes match — add</string>
+    <string name="chat_safety">Safety code: %1$s</string>
+    <string name="chat_personal">Personal conversation</string>
+    <string name="chat_storage">Your conversations stay with you. History is stored only on participants’ devices.</string>
+</resources>

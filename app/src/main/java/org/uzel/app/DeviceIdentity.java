@@ -9,11 +9,11 @@ import java.util.Date;
 import javax.security.auth.x500.X500Principal;
 import org.uzel.core.TlsIdentity;
 
-final class DeviceIdentity {
+public final class DeviceIdentity {
     // v1 authorized only SHA-256, but Conscrypt signs already-hashed TLS messages.
     // Key authorizations are immutable: retain v1 and create a compatible identity.
     private static final String ALIAS="uzel-node-v2";
-    static TlsIdentity load() throws Exception {
+    public static synchronized TlsIdentity load() throws Exception {
         KeyStore store=KeyStore.getInstance("AndroidKeyStore");store.load(null);
         if(!store.containsAlias(ALIAS)) {
             KeyPairGenerator generator=KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC,"AndroidKeyStore");

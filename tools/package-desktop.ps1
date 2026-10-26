@@ -1,4 +1,4 @@
-param([ValidateSet('app-image','exe','msi')][string]$Type='exe',[string]$Version='0.7.2',[string]$WixDirectory)
+param([ValidateSet('app-image','exe','msi')][string]$Type='exe',[string]$Version='0.8.0',[string]$WixDirectory)
 $ErrorActionPreference='Stop'
 if ($env:OS -ne 'Windows_NT') { throw 'Windows packaging must run locally on Windows.' }
 $root=[IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent))
@@ -9,7 +9,7 @@ if (Test-Path $alias) {
     $item=Get-Item -LiteralPath $alias
     if ($item.LinkType -ne 'Junction' -or [IO.Path]::GetFullPath([string]$item.Target) -ne $root) { throw 'Build alias belongs to another workspace.' }
 } else { New-Item -ItemType Junction -Path $alias -Target $root | Out-Null }
-$jdk=Join-Path $alias '.tools/jdk-17.0.20.1+1'
+$jdk=Join-Path $alias '.tools/jdk-21.0.12.1+1'
 if (-not (Test-Path "$jdk/bin/jpackage.exe")) { throw 'Run tools/bootstrap.ps1 to prepare the local JDK.' }
 if ($Type -ne 'app-image') {
     if (-not $WixDirectory) { $WixDirectory=Join-Path $alias '.tools/wix-3.14.1' }
@@ -31,10 +31,17 @@ try {
     New-Item -ItemType Directory -Force $dest | Out-Null
     $arguments=@('--type',$Type,'--name','Uzelio','--app-version',$Version,'--vendor','Uzelio',
         '--description','Uzelio distributed device directory','--input',"$alias/desktop/build/package-input",'--main-jar','desktop.jar',
-        '--main-class','org.uzel.desktop.DesktopMain','--dest',$dest,'--icon',"$alias/desktop/build/uzelio.ico",'--add-modules','java.desktop,java.naming,jdk.crypto.ec',
+        '--main-class','org.uzel.desktop.DesktopMain','--dest',$dest,'--icon',"$alias/desktop/build/uzelio.ico",'--add-modules','java.desktop,java.naming,java.sql,jdk.crypto.ec',
         '--java-options','-Dfile.encoding=UTF-8')
     if ($Type -ne 'app-image') { $arguments+=@('--win-per-user-install','--win-shortcut','--win-menu','--win-menu-group','Uzelio','--win-dir-chooser','--win-upgrade-uuid','73e27e14-437c-46d3-b24c-477f68f4e912') }
     & "$jdk/bin/jpackage.exe" @arguments
     if ($LASTEXITCODE) { throw 'jpackage failed.' }
+    if ($Type -eq 'app-image') {
+        $runtimeRelease=Join-Path $dest 'Uzelio/runtime/release'
+        if (-not (Test-Path -LiteralPath $runtimeRelease) -or
+            -not (Select-String -LiteralPath $runtimeRelease -Pattern '^JAVA_VERSION="21\.0\.12\.1"$' -Quiet)) {
+            throw 'Packaged runtime is not the required Java 21.0.12.1.'
+        }
+    }
     Write-Output "Package output: $dest"
 } finally { Pop-Location }

@@ -22,12 +22,12 @@ function Get-VerifiedArchive([string]$Url, [string]$Path, [string]$Hash, [string
 
 # SHA256 from official GitHub asset digests and Gradle distribution checksum;
 # Google repository2-1.xml publishes SHA1 for this command-line tools release.
-$jdk = Join-Path $ToolsRoot 'jdk-17.0.20.1+1'
+$jdk = Join-Path $ToolsRoot 'jdk-21.0.12.1+1'
 $gradle = Join-Path $ToolsRoot 'gradle-8.13'
 $sdk = Join-Path $ToolsRoot 'android-sdk'
 if (-not (Test-Path "$jdk/bin/java.exe")) {
-    Get-VerifiedArchive 'https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jdk_x64_windows_hotspot_17.0.20.1_1.zip' "$ToolsRoot/jdk.zip" 'e53a79c3c3d86865bd7e787903884331068e71321714ffd44f145785affc7cb0'
-    Expand-Archive -LiteralPath "$ToolsRoot/jdk.zip" -DestinationPath $ToolsRoot -Force
+    Get-VerifiedArchive 'https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip' "$ToolsRoot/jdk21.zip" 'f9d6e191ab098c0d416e7d588a24420a8621cd2f4720dab2459b8b7b2d2d8b4e'
+    Expand-Archive -LiteralPath "$ToolsRoot/jdk21.zip" -DestinationPath $ToolsRoot -Force
 }
 if (-not (Test-Path "$gradle/bin/gradle.bat")) {
     Get-VerifiedArchive 'https://services.gradle.org/distributions/gradle-8.13-bin.zip' "$ToolsRoot/gradle.zip" '20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78'
@@ -57,7 +57,7 @@ if ($AcceptSdkLicenses) {
     (1..100 | ForEach-Object { 'y' }) | & $sdkmanager "--sdk_root=$sdk" --licenses > "$ToolsRoot/sdk-licenses.log"
     if ($LASTEXITCODE -ne 0) { throw 'SDK license acceptance failed' }
 }
-& $sdkmanager "--sdk_root=$sdk" 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+& $sdkmanager "--sdk_root=$sdk" 'platform-tools' 'platforms;android-35' 'platforms;android-36' 'build-tools;35.0.0'
 if ($LASTEXITCODE -ne 0) { throw 'SDK installation failed. Run with -AcceptSdkLicenses if needed.' }
 
 New-Item -ItemType Directory -Force "$projectRoot/app/libs" | Out-Null

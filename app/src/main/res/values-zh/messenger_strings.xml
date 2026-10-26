@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_title">聊天</string>
+    <string name="chat_add">添加联系人</string>
+    <string name="chat_invite">我的邀请</string>
+    <string name="chat_search">搜索联系人</string>
+    <string name="chat_empty">暂无聊天。使用对方的邀请添加联系人。</string>
+    <string name="chat_not_found">未找到联系人。请尝试其他名称。</string>
+    <string name="chat_select">选择联系人以开始对话</string>
+    <string name="chat_history_empty">暂无消息</string>
+    <string name="chat_message">消息</string>
+    <string name="chat_send">发送</string>
+    <string name="chat_back">返回聊天</string>
+    <string name="chat_retry">重试连接</string>
+    <string name="chat_loading">正在打开加密消息存储…</string>
+    <string name="chat_error">聊天暂不可用。解锁设备后重试。</string>
+    <string name="chat_name">显示名称</string>
+    <string name="chat_code">邀请代码</string>
+    <string name="chat_host">联系人可访问的地址</string>
+    <string name="chat_host_hint">例如：192.168.1.20</string>
+    <string name="chat_invite_notice">请通过可信渠道分享。为每位联系人创建新的邀请。请勿重复使用代码。NAT 后的地址不会自动变为可访问。</string>
+    <string name="chat_port">本地监听端口：%1$d</string>
+    <string name="chat_generate">创建邀请</string>
+    <string name="chat_copy">复制代码</string>
+    <string name="chat_copied">代码已复制</string>
+    <string name="chat_cancel">取消</string>
+    <string name="chat_queued">等待发送</string>
+    <string name="chat_sent">已发送</string>
+    <string name="chat_delivered">已送达</string>
+    <string name="chat_private">个人对话 · 端到端加密</string>
+    <string name="chat_waiting">送达需要设备之间建立连接。历史记录保存在参与者的设备上。</string>
+    <string name="chat_action_error">请检查邀请、名称或地址，然后重试。</string>
+    <string name="chat_verify_title">验证联系人</string>
+    <string name="chat_verify_notice">添加联系人前，请通过另一个可信渠道比对安全码。</string>
+    <string name="chat_match">代码匹配 — 添加</string>
+    <string name="chat_safety">安全码：%1$s</string>
+    <string name="chat_personal">个人对话</string>
+    <string name="chat_storage">对话由你保管。历史记录仅存储在参与者的设备上。</string>
+</resources>

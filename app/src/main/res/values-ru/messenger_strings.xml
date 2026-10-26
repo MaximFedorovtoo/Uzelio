@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_title">Чаты</string>
+    <string name="chat_add">Добавить контакт</string>
+    <string name="chat_invite">Моё приглашение</string>
+    <string name="chat_search">Поиск контактов</string>
+    <string name="chat_empty">Пока нет чатов. Добавьте контакт по его приглашению.</string>
+    <string name="chat_not_found">Контакты не найдены. Попробуйте другое имя.</string>
+    <string name="chat_select">Выберите контакт для переписки</string>
+    <string name="chat_history_empty">Сообщений пока нет</string>
+    <string name="chat_message">Сообщение</string>
+    <string name="chat_send">Отправить</string>
+    <string name="chat_back">Назад к чатам</string>
+    <string name="chat_retry">Повторить подключение</string>
+    <string name="chat_loading">Открываем защищённое хранилище…</string>
+    <string name="chat_error">Чаты недоступны. Повторите после разблокировки устройства.</string>
+    <string name="chat_name">Имя контакта</string>
+    <string name="chat_code">Код приглашения</string>
+    <string name="chat_host">Адрес, доступный вашему контакту</string>
+    <string name="chat_host_hint">Например, 192.168.1.20</string>
+    <string name="chat_invite_notice">Передавайте приглашение через доверенный канал. Создавайте свежее приглашение для каждого контакта. Не используйте коды повторно. Адрес за NAT не становится автоматически доступным.</string>
+    <string name="chat_port">Локальный порт: %1$d</string>
+    <string name="chat_generate">Создать приглашение</string>
+    <string name="chat_copy">Скопировать код</string>
+    <string name="chat_copied">Код скопирован</string>
+    <string name="chat_cancel">Отмена</string>
+    <string name="chat_queued">Ожидает отправки</string>
+    <string name="chat_sent">Отправлено</string>
+    <string name="chat_delivered">Доставлено</string>
+    <string name="chat_private">Личная переписка · сквозное шифрование</string>
+    <string name="chat_waiting">Доставка требует соединения между вашими устройствами. История остаётся у участников.</string>
+    <string name="chat_action_error">Проверьте приглашение, имя или адрес и повторите.</string>
+    <string name="chat_verify_title">Проверка контакта</string>
+    <string name="chat_verify_notice">До добавления контакта сравните код безопасности через независимый доверенный канал.</string>
+    <string name="chat_match">Код совпадает · добавить</string>
+    <string name="chat_safety">Код безопасности: %1$s</string>
+    <string name="chat_personal">Личная переписка</string>
+    <string name="chat_storage">Ваши разговоры — у вас. История хранится только на устройствах участников.</string>
+</resources>

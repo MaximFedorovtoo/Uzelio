@@ -33,7 +33,8 @@ public class DesktopPairingManagerTest {
             String offer=PairingCode.offer(f.phoneIdentity,"fresh-after-remote-restart",new Invitation("127.0.0.1",f.phone.port(),f.phoneIdentity.fingerprint,f.phoneToken),System.currentTimeMillis()).encode();
             DiscoverySignal signal=f.phoneDiscovery.seal(f.currentPcPresence(),offer,System.currentTimeMillis());f.server.accept(signal,System.currentTimeMillis());f.client.refresh().get(2,TimeUnit.SECONDS);Thread.sleep(80);
             assertSame(old,f.fake.get());assertFalse("An incoming offer must not replace a still live transport",old.closed);
-            old.listener.state("CLOSED");f.client.refresh().get(2,TimeUnit.SECONDS);await(()->f.fake.get()!=old);FakeTransport replacement=f.fake.get();
+            // Factory publication precedes acceptOffer on the serial executor.
+            old.listener.state("CLOSED");f.client.refresh().get(2,TimeUnit.SECONDS);await(()->f.fake.get()!=old&&f.fake.get().offers.get()==1);FakeTransport replacement=f.fake.get();
             assertEquals(1,replacement.offers.get());assertTrue(old.closed);f.client.refresh().get(2,TimeUnit.SECONDS);Thread.sleep(80);assertSame(replacement,f.fake.get());assertEquals(1,replacement.offers.get());
             replacement.listener.state("CONNECTED");await(()->f.manager.invitation(f.phoneIdentity.fingerprint)!=null);replacement.listener.state("CLOSED");await(()->replacement.closed);
             setLastIncoming(f.manager,0);f.server.accept(f.phoneDiscovery.seal(f.currentPcPresence(),offer,System.currentTimeMillis()),System.currentTimeMillis());f.client.refresh().get(2,TimeUnit.SECONDS);Thread.sleep(120);

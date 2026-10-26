@@ -1,19 +1,34 @@
 plugins { id 'com.android.application' }
 android {
+    packaging {
+        resources { excludes += ['/*.dll', '/*.dylib', '/*.so'] }
+        jniLibs { excludes += ['**/libsignal_jni_testing.so'] }
+    }
     namespace 'org.uzel.app'
-    compileSdk 35
+    compileSdk 36
     defaultConfig {
         applicationId 'org.uzel.app'
         minSdk 29
         targetSdk 35
-        versionCode 8
-        versionName '0.7.2'
+        versionCode 9
+        versionName '0.8.0'
         testInstrumentationRunner 'android.test.InstrumentationTestRunner'
+    }
+    // libsignal ships one ~118 MiB native library per ABI; the four-ABI universal APK is ~540 MiB.
+    // Ship per-ABI artifacts instead: arm64-v8a for devices, x86_64 for the local emulator.
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'arm64-v8a', 'x86_64'
+            universalApk false
+        }
     }
     useLibrary 'android.test.runner'
     useLibrary 'android.test.base'
     bundle { language { enableSplit = false } }
     compileOptions {
+        coreLibraryDesugaringEnabled true
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
@@ -24,6 +39,11 @@ android {
     }
 }
 dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+    implementation project(':messenger')
+    implementation 'org.signal:libsignal-android:0.105.4'
+    implementation 'net.zetetic:sqlcipher-android:4.19.1'
+    implementation 'androidx.sqlite:sqlite:2.7.0'
     implementation project(':core')
     // Run tools/bootstrap-traversal.ps1; pinned MavenCentral AAR hash is checked there.
     implementation files(rootProject.file('.tools/traversal/android-144.7559.15.aar'))

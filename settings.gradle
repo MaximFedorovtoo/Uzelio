@@ -3,9 +3,13 @@ pluginManagement {
 }
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories { google(); mavenCentral() }
+    repositories {
+        google(); mavenCentral()
+        maven { url 'https://build-artifacts.signal.org/libraries/maven'; content { includeGroup 'org.signal' } }
+    }
 }
 rootProject.name = 'Uzelio'
 include ':core', ':app'
 include ':routing-probe-vpn', ':routing-probe-direct'
 include ':desktop'
+include ':messenger'

@@ -1,11 +1,14 @@
-param([string]$Version='0.7.2')
+param([string]$Version='0.8.0')
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent))
 $outputFolder = Join-Path $projectRoot 'dist'
 New-Item -ItemType Directory -Force -Path $outputFolder | Out-Null
 $apk = Join-Path $outputFolder 'Uzelio.apk'
 $archive = Join-Path $outputFolder "Uzelio-$Version-source.zip"
-Copy-Item -LiteralPath (Join-Path $projectRoot 'app/build/outputs/apk/debug/app-debug.apk') -Destination $apk
+# ABI splits: the phone artifact carries only arm64-v8a native libraries.
+$splitApk = Join-Path $projectRoot 'app/build/outputs/apk/debug/app-arm64-v8a-debug.apk'
+$universalApk = Join-Path $projectRoot 'app/build/outputs/apk/debug/app-debug.apk'
+Copy-Item -LiteralPath $(if (Test-Path $splitApk) { $splitApk } else { $universalApk }) -Destination $apk
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $stream = [IO.File]::Open($archive,[IO.FileMode]::Create)

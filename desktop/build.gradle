@@ -1,5 +1,8 @@
 plugins { id 'application' }
 java { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+configurations.configureEach {
+    attributes.attribute(org.gradle.api.attributes.java.TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 21)
+}
 application { mainClass = 'org.uzel.desktop.DesktopMain' }
 sourceSets.main.resources {
     srcDir '../app/src/main/assets'
@@ -12,6 +15,10 @@ sourceSets.main.resources {
 }
 dependencies {
     implementation project(':core')
+    implementation project(':messenger')
+    implementation 'io.github.willena:sqlite-jdbc:3.53.4.0'
+    implementation 'org.slf4j:slf4j-api:1.7.36'
+    runtimeOnly 'org.slf4j:slf4j-nop:1.7.36'
     implementation 'org.bouncycastle:bcpkix-jdk18on:1.83'
     implementation 'net.java.dev.jna:jna:5.17.0'
     implementation('dev.onvoid.webrtc:webrtc-java:0.20.0') { transitive = false }

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_title">Discussions</string>
+    <string name="chat_add">Ajouter un contact</string>
+    <string name="chat_invite">Mon invitation</string>
+    <string name="chat_search">Rechercher des contacts</string>
+    <string name="chat_empty">Aucune discussion pour le moment. Ajoutez un contact avec son invitation.</string>
+    <string name="chat_not_found">Aucun contact trouvé. Essayez un autre nom.</string>
+    <string name="chat_select">Sélectionnez un contact pour commencer une conversation</string>
+    <string name="chat_history_empty">Aucun message pour le moment</string>
+    <string name="chat_message">Message</string>
+    <string name="chat_send">Envoyer</string>
+    <string name="chat_back">Retour aux discussions</string>
+    <string name="chat_retry">Réessayer la connexion</string>
+    <string name="chat_loading">Ouverture du stockage chiffré des messages…</string>
+    <string name="chat_error">Discussions indisponibles. Réessayez après avoir déverrouillé l’appareil.</string>
+    <string name="chat_name">Nom affiché</string>
+    <string name="chat_code">Code d’invitation</string>
+    <string name="chat_host">Adresse accessible à votre contact</string>
+    <string name="chat_host_hint">Par exemple, 192.168.1.20</string>
+    <string name="chat_invite_notice">Utilisez un canal de confiance. Créez une nouvelle invitation pour chaque contact. Ne réutilisez pas les codes. Une adresse derrière un NAT n’est pas automatiquement accessible.</string>
+    <string name="chat_port">Port d’écoute local : %1$d</string>
+    <string name="chat_generate">Créer une invitation</string>
+    <string name="chat_copy">Copier le code</string>
+    <string name="chat_copied">Code copié</string>
+    <string name="chat_cancel">Annuler</string>
+    <string name="chat_queued">En attente d’envoi</string>
+    <string name="chat_sent">Envoyé</string>
+    <string name="chat_delivered">Distribué</string>
+    <string name="chat_private">Conversation privée · chiffrement de bout en bout</string>
+    <string name="chat_waiting">La distribution nécessite une connexion entre vos appareils. L’historique reste sur les appareils des participants.</string>
+    <string name="chat_action_error">Vérifiez l’invitation, le nom ou l’adresse, puis réessayez.</string>
+    <string name="chat_verify_title">Vérification du contact</string>
+    <string name="chat_verify_notice">Avant d’ajouter ce contact, comparez le code de sécurité par un autre canal de confiance.</string>
+    <string name="chat_match">Codes identiques — ajouter</string>
+    <string name="chat_safety">Code de sécurité : %1$s</string>
+    <string name="chat_personal">Conversation privée</string>
+    <string name="chat_storage">Vos conversations restent avec vous. L’historique est stocké uniquement sur les appareils des participants.</string>
+</resources>

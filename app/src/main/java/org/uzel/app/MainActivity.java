@@ -63,6 +63,7 @@ public class MainActivity extends Activity {
     private HorizontalScrollView filterStrip;
     private PeerArtwork searchArtwork;
     private ScrollView pageScroll;
+    private org.uzel.app.messenger.MessengerScreen messengerScreen;
 
     @Override protected void attachBaseContext(Context base) {
         String language = base.getSharedPreferences("ui", MODE_PRIVATE).getString("language", "");
@@ -76,6 +77,7 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         controller = NodeController.get(this);
+        messengerScreen = new org.uzel.app.messenger.MessengerScreen(this,state);
         if (state != null) { selectedTab = state.getInt("tab"); selectedRegion=state.getInt("region"); pendingPeer = state.getString("pendingPeer");connectionPeer=state.getString("connectionPeer","");connectionName=state.getString("connectionName","");connectionRequested=state.getBoolean("connectionRequested",false); }
         getWindow().setStatusBarColor(BG); getWindow().setNavigationBarColor(BG);
         getWindow().getDecorView().setSystemUiVisibility(0);
@@ -87,9 +89,11 @@ public class MainActivity extends Activity {
         nav = new LinearLayout(this); nav.setGravity(Gravity.CENTER); nav.setBackground(raised(false,22)); nav.setPadding(dp(4),dp(7),dp(4),dp(5)); root.addView(nav);
         setContentView(root); showTab(selectedTab);
     }
-    @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putInt("tab",selectedTab);out.putInt("region",selectedRegion); out.putString("pendingPeer",pendingPeer);out.putString("connectionPeer",connectionPeer);out.putString("connectionName",connectionName);out.putBoolean("connectionRequested",connectionRequested); }
+    @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putInt("tab",selectedTab);if(messengerScreen!=null)messengerScreen.saveState(out);out.putInt("region",selectedRegion); out.putString("pendingPeer",pendingPeer);out.putString("connectionPeer",connectionPeer);out.putString("connectionName",connectionName);out.putBoolean("connectionRequested",connectionRequested); }
     @Override protected void onResume() { super.onResume(); handler.removeCallbacks(ticker); ticker.run(); }
     @Override protected void onPause() { handler.removeCallbacks(ticker); super.onPause(); }
+    @Override public void onBackPressed(){if(selectedTab==4&&messengerScreen.backToContacts())return;if(selectedTab!=0){showTab(0);return;}super.onBackPressed();}
+    @Override protected void onDestroy(){if(messengerScreen!=null)messengerScreen.close();super.onDestroy();}
     private String s(String key,Object... args) { int id=stringResource(key); return args.length==0?getString(id):getString(id,args); }
     private static int stringResource(String key) {
         return switch (key) {
@@ -206,12 +210,12 @@ public class MainActivity extends Activity {
     }
     private void buildHeader(int tab) {
         header.removeAllViews();
-        if(tab==0){
+        if(tab==0||tab==4){
             TextView brand=label("Uzelio",32,NAVY,true);android.text.SpannableString word=new android.text.SpannableString("Uzelio");word.setSpan(new android.text.style.ForegroundColorSpan(GREEN),4,6,0);brand.setText(word);header.addView(brand,new LinearLayout.LayoutParams(0,-2,1));
             header.addView(iconButton("settings",s("settings"),()->showTab(3)),new LinearLayout.LayoutParams(dp(48),dp(48)));
         }else{
             View back=iconButton("back",s("home"),()->showTab(0));back.setBackground(null);header.addView(back,new LinearLayout.LayoutParams(dp(48),dp(48)));
-            header.addView(label(tab==1?getString(R.string.ui_map):s(tab==2?"statistics":"settings"),26,NAVY,true),new LinearLayout.LayoutParams(0,-2,1));
+            header.addView(label(tab==4?getString(R.string.chat_title):tab==1?getString(R.string.ui_map):s(tab==2?"statistics":"settings"),26,NAVY,true),new LinearLayout.LayoutParams(0,-2,1));
         }
     }
     private void showTab(int tab) {
@@ -221,11 +225,12 @@ public class MainActivity extends Activity {
         connectionProgress=null;
         sharingRateValue=sharingRateMinimum=sharingRateRequested=null;
         networkMap=null;searchTitle=searchHint=mapCount=null;searchProgress=null;searchAction=allRegions=searchDetails=null;regionChips=null;searchPanel=null;filterStrip=null;searchArtwork=null;
-        String[] tabs={"home","nodes","statistics","settings"}; String[] symbols={"home","map","traffic","profile"};
-        for(int i=0;i<tabs.length;i++) { final int index=i;String title=switch(i){case 1->getString(R.string.ui_map_tab);case 2->getString(R.string.ui_traffic);case 3->getString(R.string.ui_profile);default->s(tabs[i]);};LinearLayout item=column();item.setGravity(Gravity.CENTER);int tint=i==tab?GREEN:MUTED;
-            item.addView(new PeerArtwork(this,symbols[i],tint),new LinearLayout.LayoutParams(dp(27),dp(27)));TextView caption=label(title,10,tint,i==tab);caption.setGravity(Gravity.CENTER);item.addView(caption);item.setMinimumHeight(dp(58));item.setContentDescription(title);item.setSelected(i==tab);item.setFocusable(true);nav.addView(item,new LinearLayout.LayoutParams(0,-2,1));item.setOnClickListener(v->showTab(index)); }
+        int[] targets={0,4,3};String[] symbols={"home","chat","profile"};
+        for(int i=0;i<targets.length;i++) { final int index=targets[i];String title=i==0?s("home"):getString(i==1?R.string.chat_title:R.string.ui_profile);LinearLayout item=column();item.setGravity(Gravity.CENTER);int tint=index==tab||(index==0&&(tab==1||tab==2))?GREEN:MUTED;
+            View artwork=i==1?new View(this){protected void onDraw(android.graphics.Canvas canvas){android.graphics.Paint p=new android.graphics.Paint(3);p.setColor(tint);p.setStyle(android.graphics.Paint.Style.STROKE);p.setStrokeWidth(dp(2));canvas.drawRoundRect(dp(3),dp(3),getWidth()-dp(3),getHeight()-dp(7),dp(5),dp(5),p);canvas.drawLine(dp(7),getHeight()-dp(7),dp(5),getHeight()-dp(2),p);}}:new PeerArtwork(this,symbols[i],tint);
+            item.addView(artwork,new LinearLayout.LayoutParams(dp(27),dp(27)));TextView caption=label(title,10,tint,index==tab);caption.setGravity(Gravity.CENTER);item.addView(caption);item.setMinimumHeight(dp(58));item.setContentDescription(title);item.setSelected(index==tab);item.setFocusable(true);nav.addView(item,new LinearLayout.LayoutParams(0,-2,1));item.setOnClickListener(v->showTab(index)); }
         buildHeader(tab);
-        if(tab==0) home(); else if(tab==1) nodes(); else if(tab==2) statistics(); else settings();
+        if(tab==0) home(); else if(tab==1) nodes(); else if(tab==2) statistics(); else if(tab==4){if(messengerScreen.getParent()!=null)((ViewGroup)messengerScreen.getParent()).removeView(messengerScreen);content.addView(messengerScreen,new LinearLayout.LayoutParams(-1,Math.max(dp(420),pageScroll.getHeight()-dp(12))));pageScroll.post(()->{if(selectedTab==4&&messengerScreen.getParent()!=null){int height=pageScroll.getHeight()-dp(12);if(height>0)messengerScreen.setLayoutParams(new LinearLayout.LayoutParams(-1,Math.max(dp(420),height)));}});messengerScreen.refresh();}else settings();
         pageScroll.scrollTo(0,0);
         refresh();
     }
@@ -244,6 +249,7 @@ public class MainActivity extends Activity {
         LinearLayout map=card();LinearLayout mh=new LinearLayout(this);mh.setGravity(Gravity.CENTER_VERTICAL);mh.addView(label(getString(R.string.ui_world_nodes),16,NAVY,true),new LinearLayout.LayoutParams(0,-2,1));mh.addView(new PeerArtwork(this,"chevron",MUTED),new LinearLayout.LayoutParams(dp(18),dp(18)));map.addView(mh);
         networkMap=new NetworkMapView(this);map.addView(networkMap,new LinearLayout.LayoutParams(-1,dp(175)));networkMap.setOnRegionSelectedListener(region->{selectedRegion=region;showTab(1);});
         button(map,getString(R.string.ui_open_map),false,()->showTab(1));
+        LinearLayout trafficCard=card();button(trafficCard,getString(R.string.ui_traffic),false,()->showTab(2));
         LinearLayout apps=card();LinearLayout ah=new LinearLayout(this);ah.setGravity(Gravity.CENTER_VERTICAL);ah.addView(label(getString(R.string.ui_apps),16,NAVY,true),new LinearLayout.LayoutParams(0,-2,1));ah.addView(new PeerArtwork(this,"chevron",MUTED),new LinearLayout.LayoutParams(dp(20),dp(20)));apps.addView(ah);apps.setOnClickListener(v->chooseApps());apps.setFocusable(true);apps.setContentDescription(getString(R.string.ui_choose_apps));
         boolean allApps=AppSelection.allApplications(this);
         LinearLayout icons=new LinearLayout(this);if(!allApps)for(String pkg:AppSelection.validPackages(this)){if(icons.getChildCount()>=5)break;try{FrameLayout tile=new FrameLayout(this);tile.setBackground(raised(false,14));ImageView icon=new ImageView(this);icon.setImageDrawable(getPackageManager().getApplicationIcon(pkg));icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);tile.addView(icon,new FrameLayout.LayoutParams(dp(35),dp(35),Gravity.CENTER));LinearLayout.LayoutParams ip=new LinearLayout.LayoutParams(dp(60),dp(54));ip.setMarginEnd(dp(10));icons.addView(tile,ip);}catch(android.content.pm.PackageManager.NameNotFoundException ignored){}}
@@ -336,6 +342,7 @@ public class MainActivity extends Activity {
         manualPairing();
     }
     private void refresh() {
+        if(selectedTab==4&&messengerScreen!=null)messengerScreen.refresh();
         if(controller==null)return; NodeController.Snapshot x=controller.snapshot();
         renderSnapshot(x);
     }

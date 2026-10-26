@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_title">Chat</string>
+    <string name="chat_add">Aggiungi contatto</string>
+    <string name="chat_invite">Il mio invito</string>
+    <string name="chat_search">Cerca contatti</string>
+    <string name="chat_empty">Non ci sono ancora chat. Aggiungi un contatto usando il suo invito.</string>
+    <string name="chat_not_found">Nessun contatto trovato. Prova un altro nome.</string>
+    <string name="chat_select">Seleziona un contatto per iniziare una conversazione</string>
+    <string name="chat_history_empty">Nessun messaggio</string>
+    <string name="chat_message">Messaggio</string>
+    <string name="chat_send">Invia</string>
+    <string name="chat_back">Torna alle chat</string>
+    <string name="chat_retry">Riprova la connessione</string>
+    <string name="chat_loading">Apertura dell’archivio dei messaggi cifrato…</string>
+    <string name="chat_error">Chat non disponibili. Riprova dopo aver sbloccato il dispositivo.</string>
+    <string name="chat_name">Nome visualizzato</string>
+    <string name="chat_code">Codice di invito</string>
+    <string name="chat_host">Indirizzo raggiungibile dal tuo contatto</string>
+    <string name="chat_host_hint">Ad esempio, 192.168.1.20</string>
+    <string name="chat_invite_notice">Usa un canale fidato. Crea un nuovo invito per ogni contatto. Non riutilizzare i codici. Un indirizzo dietro NAT non è raggiungibile automaticamente.</string>
+    <string name="chat_port">Porta locale in ascolto: %1$d</string>
+    <string name="chat_generate">Crea invito</string>
+    <string name="chat_copy">Copia codice</string>
+    <string name="chat_copied">Codice copiato</string>
+    <string name="chat_cancel">Annulla</string>
+    <string name="chat_queued">In attesa di invio</string>
+    <string name="chat_sent">Inviato</string>
+    <string name="chat_delivered">Consegnato</string>
+    <string name="chat_private">Conversazione personale · cifratura end-to-end</string>
+    <string name="chat_waiting">La consegna richiede una connessione tra i tuoi dispositivi. La cronologia resta sui dispositivi dei partecipanti.</string>
+    <string name="chat_action_error">Controlla l’invito, il nome o l’indirizzo, quindi riprova.</string>
+    <string name="chat_verify_title">Verifica del contatto</string>
+    <string name="chat_verify_notice">Prima di aggiungere il contatto, confronta il codice di sicurezza tramite un canale fidato separato.</string>
+    <string name="chat_match">Codici corrispondenti — aggiungi</string>
+    <string name="chat_safety">Codice di sicurezza: %1$s</string>
+    <string name="chat_personal">Conversazione personale</string>
+    <string name="chat_storage">Le conversazioni restano con te. La cronologia è archiviata solo sui dispositivi dei partecipanti.</string>
+</resources>

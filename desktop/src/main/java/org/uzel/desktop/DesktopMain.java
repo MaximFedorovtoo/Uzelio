@@ -23,6 +23,7 @@ public final class DesktopMain {
         if(lock==null){channel.close();JOptionPane.showMessageDialog(null,"Uzelio уже запущен. Откройте значок в области уведомлений.");return;}
         Runtime.getRuntime().addShutdownHook(new Thread(()->{try{channel.close();}catch(Exception ignored){}}));
         DesktopBackend backend=new FederationBackend(root,IdentityStore.load(root));Runtime.getRuntime().addShutdownHook(new Thread(backend::close));
+        if(args.length==0||args[0].equals("--smoke-test")){org.uzel.desktop.messenger.DesktopMessenger.start(root);if(args.length==0)org.uzel.desktop.messenger.DesktopMessenger.chats(root);}
         if(args.length>0&&args[0].equals("--smoke-test")){backend.start(new DesktopConfig("localhost",17777,true));System.out.println("Uzelio runtime OK; identity persisted; network started");backend.close();return;}
         if(args.length==2&&args[0].equals("--render-preview")){SwingUtilities.invokeAndWait(()->{try{new DesktopWindow(root,backend).renderPreview(Path.of(args[1]));}catch(Exception e){throw new RuntimeException(e);}});backend.close();return;}
         SwingUtilities.invokeLater(()->{try{new DesktopWindow(root,backend).open();}catch(Exception e){JOptionPane.showMessageDialog(null,e.getMessage(),"Uzelio",JOptionPane.ERROR_MESSAGE);System.exit(1);}});

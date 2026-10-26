@@ -14,7 +14,7 @@
             <category android:name="android.intent.category.LAUNCHER"/>
         </intent>
     </queries>
-    <application android:label="@string/app_name" android:icon="@drawable/ic_node"
+    <application android:name=".UzelioApplication" android:label="@string/app_name" android:icon="@drawable/ic_node"
         android:theme="@style/UzelioTheme"
         android:allowBackup="false" android:fullBackupContent="false"
         android:dataExtractionRules="@xml/data_extraction_rules" android:usesCleartextTraffic="false"

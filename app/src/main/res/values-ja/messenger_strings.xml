@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_title">チャット</string>
+    <string name="chat_add">連絡先を追加</string>
+    <string name="chat_invite">自分の招待</string>
+    <string name="chat_search">連絡先を検索</string>
+    <string name="chat_empty">チャットはまだありません。招待を使って連絡先を追加してください。</string>
+    <string name="chat_not_found">連絡先が見つかりません。別の名前をお試しください。</string>
+    <string name="chat_select">会話を始める連絡先を選択</string>
+    <string name="chat_history_empty">メッセージはまだありません</string>
+    <string name="chat_message">メッセージ</string>
+    <string name="chat_send">送信</string>
+    <string name="chat_back">チャットに戻る</string>
+    <string name="chat_retry">接続を再試行</string>
+    <string name="chat_loading">暗号化されたメッセージ保存領域を開いています…</string>
+    <string name="chat_error">チャットを利用できません。端末のロックを解除してから再試行してください。</string>
+    <string name="chat_name">表示名</string>
+    <string name="chat_code">招待コード</string>
+    <string name="chat_host">相手が接続できるアドレス</string>
+    <string name="chat_host_hint">例: 192.168.1.20</string>
+    <string name="chat_invite_notice">信頼できる経路で共有してください。連絡先ごとに新しい招待を作成し、コードを再利用しないでください。NAT 配下のアドレスは自動的に到達可能になるわけではありません。</string>
+    <string name="chat_port">ローカル待受ポート: %1$d</string>
+    <string name="chat_generate">招待を作成</string>
+    <string name="chat_copy">コードをコピー</string>
+    <string name="chat_copied">コードをコピーしました</string>
+    <string name="chat_cancel">キャンセル</string>
+    <string name="chat_queued">送信待ち</string>
+    <string name="chat_sent">送信済み</string>
+    <string name="chat_delivered">配信済み</string>
+    <string name="chat_private">個人間の会話 · エンドツーエンド暗号化</string>
+    <string name="chat_waiting">配信には端末間の接続が必要です。履歴は参加者の端末に保存されます。</string>
+    <string name="chat_action_error">招待、名前、アドレスを確認して再試行してください。</string>
+    <string name="chat_verify_title">連絡先の確認</string>
+    <string name="chat_verify_notice">連絡先を追加する前に、別の信頼できる経路で安全コードを照合してください。</string>
+    <string name="chat_match">コードが一致 — 追加</string>
+    <string name="chat_safety">安全コード: %1$s</string>
+    <string name="chat_personal">個人間の会話</string>
+    <string name="chat_storage">会話はあなたの手元に残ります。履歴は参加者の端末にのみ保存されます。</string>
+</resources>

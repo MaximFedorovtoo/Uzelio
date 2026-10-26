@@ -1,0 +1,12 @@
+plugins { id 'java-library' }
+java { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+// Java sources stay at 17; libsignal's JVM runtime requires 21. Android uses D8.
+configurations.configureEach {
+    attributes.attribute(org.gradle.api.attributes.java.TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 21)
+}
+dependencies {
+    api project(':core')
+    api 'org.signal:libsignal-client:0.105.4'
+    testImplementation 'junit:junit:4.13.2'
+}
+test { testLogging { events 'passed', 'failed' } }
