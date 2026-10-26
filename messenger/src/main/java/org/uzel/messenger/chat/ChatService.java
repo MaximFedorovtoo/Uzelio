@@ -2,6 +2,8 @@ package org.uzel.messenger.chat;
 
 import org.uzel.core.*;
 import org.uzel.messenger.*;
+import org.uzel.messenger.relay.RelayClient;
+import org.uzel.messenger.relay.RelayEndpoint;
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
@@ -15,6 +17,8 @@ public final class ChatService implements AutoCloseable {
     private final ChatRepository repository;
     private final TlsIdentity identity;
     private final ChatTransport transport;
+    private final NetworkAccess network;
+    private final Map<String,RelayClient> relays=new ConcurrentHashMap<>();
     private final Map<String,ChatInvite> invites=new ConcurrentHashMap<>();
     private final ScheduledExecutorService retries=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"chat-outbox");t.setDaemon(true);return t;});
     private final AtomicBoolean queuedRetry=new AtomicBoolean();
@@ -22,18 +26,32 @@ public final class ChatService implements AutoCloseable {
     private final ThreadPoolExecutor deliveries=new ThreadPoolExecutor(4,4,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(128),r->{Thread t=new Thread(r,"chat-delivery");t.setDaemon(true);return t;},new ThreadPoolExecutor.AbortPolicy());
     private volatile boolean closed;
     public ChatService(MessengerRuntime runtime,TlsIdentity identity,NetworkAccess network,InetAddress bind,int port)throws Exception {
-        this(runtime,identity,(authorizer,receiver)->ChatTransport.pinned(identity,network,bind,port,authorizer,receiver));
+        this(runtime,identity,(authorizer,receiver)->ChatTransport.pinned(identity,network,bind,port,authorizer,receiver),network);
     }
     /** Extension point for end-to-end transports; authorization and Signal processing remain here. */
     public ChatService(MessengerRuntime runtime,TlsIdentity identity,ChatTransport.Factory factory)throws Exception {
+        this(runtime,identity,factory,new NetworkAccess());
+    }
+    public ChatService(MessengerRuntime runtime,TlsIdentity identity,ChatTransport.Factory factory,NetworkAccess network)throws Exception {
+        this.network=network==null?new NetworkAccess():network;
         messenger=Objects.requireNonNull(runtime).messenger();repository=runtime.chatRepository();this.identity=Objects.requireNonNull(identity);
         for(var contact:repository.contacts())invites.put(contact.id(),ChatInvite.decode(contact.inviteCode()));
         transport=Objects.requireNonNull(factory).create(this::knownFingerprint,this::receive);
         retries.scheduleWithFixedDelay(this::retryQuietly,2,5,TimeUnit.SECONDS);
+        // A contact may already advertise a relay: register our inbox before the first send.
+        for(var invite:invites.values())try{relay(invite);}catch(Exception ignored){/* Direct delivery still works. */}
     }
     public int localPort(){return transport.localPort();}
     /** Each call allocates fresh one-time Signal prekeys: create a separate offer for each contact. */
-    public String invitation(String advertisedHost)throws Exception {ensureOpen();return ChatInvite.create(messenger,advertisedHost,localPort(),identity.fingerprint).encode();}
+    public String invitation(String advertisedHost)throws Exception {return invitation(advertisedHost,"");}
+    /** An invitation that also advertises a storage-less relay for cross-network delivery. */
+    public String invitation(String advertisedHost,String relay)throws Exception {
+        ensureOpen();
+        String code=ChatInvite.create(messenger,advertisedHost,localPort(),identity.fingerprint,relay).encode();
+        RelayEndpoint endpoint=ChatInvite.decode(code).relay();
+        if(endpoint!=null)relay(endpoint);
+        return code;
+    }
     public List<ChatRepository.Contact> contacts()throws Exception {ensureOpen();return repository.contacts();}
     public List<ChatRepository.Message> history(String contactId)throws Exception {ensureOpen();requireContact(contactId);return repository.history(contactId);}
     /** Import only after comparing the safety code through an authenticated out-of-band channel. */
@@ -47,6 +65,7 @@ public final class ChatService implements AutoCloseable {
         messenger.trustPeer(invite.address(),invite.bundle().getIdentityKey(),records->repository.addContact(records,contact));
         invites.put(invite.id(),invite);
         messenger.establishIfAbsent(invite.address(),invite.bundle());
+        if(invite.relay()!=null)relay(invite);
         retrySoon();return repository.contact(invite.id());
     }
     public ChatRepository.Message send(String contactId,String text)throws Exception {
@@ -73,10 +92,39 @@ public final class ChatService implements AutoCloseable {
             // One offline peer occupies at most one worker and gets one failed attempt per sweep.
             for(var message:pending) {
                 if(closed)return;
-                var reply=transport.exchange(invite,new SignalMessenger.Outbound(message.cipherType(),message.ciphertext()));
+                var outbound=new SignalMessenger.Outbound(message.cipherType(),message.ciphertext());
+                SignalMessenger.Outbound reply;
+                try {
+                    reply=transport.exchange(invite,outbound);
+                } catch(Exception direct) {
+                    // Cross-network fallback: the relay forwards the same ciphertext and the peer
+                    // answers with its authenticated ACK over the same relay.
+                    RelayClient fallback=relay(invite);
+                    if(fallback==null)throw direct;
+                    fallback.send(invite.address().getName(),outbound);
+                    continue;
+                }
                 receiveFrom(invite,reply,true);
             }
         }catch(Exception ignored){/* Failure leaves original ciphertext queued, without delivery claims or logs. */}
+    }
+    /** Registers this device on a relay advertised by an invitation; null when none is advertised. */
+    private RelayClient relay(ChatInvite invite) {
+        RelayEndpoint endpoint=invite.relay();
+        return endpoint==null?null:relay(endpoint);
+    }
+    private RelayClient relay(RelayEndpoint endpoint) {
+        return relays.computeIfAbsent(endpoint.encode(),key->{
+            RelayClient client=new RelayClient(endpoint,messenger.localAddress().getName(),identity,this::receiveViaRelay,network);
+            client.start();
+            return client;
+        });
+    }
+    /** A frame arrived from the relay: authorize by the contact's advertised Signal name. */
+    private SignalMessenger.Outbound receiveViaRelay(String fromName,SignalMessenger.Outbound wire)throws Exception {
+        ensureOpen();
+        for(var invite:invites.values())if(invite.address().getName().equals(fromName))return receiveFrom(invite,wire,false);
+        throw new SecurityException("Unknown relay sender");
     }
     private boolean knownFingerprint(String fingerprint)throws Exception {
         if(closed)return false;for(var invite:invites.values())if(TlsIdentity.constantEquals(invite.tlsFingerprint(),fingerprint))return true;return false;
@@ -103,5 +151,5 @@ public final class ChatService implements AutoCloseable {
     private void retrySoon(){if(!closed&&queuedRetry.compareAndSet(false,true))try{retries.execute(()->{try{retryQuietly();}finally{queuedRetry.set(false);}});}catch(RejectedExecutionException stopped){queuedRetry.set(false);}}
     private void retryQuietly(){if(!closed)try{retryNow();}catch(Exception ignored){/* Repository/transport failures never imply delivery. */}}
     private void ensureOpen(){if(closed)throw new IllegalStateException("Chat service is closed");}
-    public void close(){closed=true;transport.close();retries.shutdownNow();deliveries.shutdownNow();try{retries.awaitTermination(2,TimeUnit.SECONDS);deliveries.awaitTermination(2,TimeUnit.SECONDS);}catch(InterruptedException e){Thread.currentThread().interrupt();}}
+    public void close(){closed=true;for(RelayClient client:relays.values())client.close();relays.clear();transport.close();retries.shutdownNow();deliveries.shutdownNow();try{retries.awaitTermination(2,TimeUnit.SECONDS);deliveries.awaitTermination(2,TimeUnit.SECONDS);}catch(InterruptedException e){Thread.currentThread().interrupt();}}
 }

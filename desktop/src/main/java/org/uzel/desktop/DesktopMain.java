@@ -18,6 +18,19 @@ public final class DesktopMain {
     public static void main(String[] args)throws Exception {
         if(args.length==1&&args[0].equals("--install-routing")){WindowsRoutingSetup.install();System.out.println("Uzelio Windows routing component installed");return;}
         Path root=dataDirectory();Files.createDirectories(root);
+        if(args.length>=1&&args[0].equals("--relay")){
+            int port=args.length>1?Integer.parseInt(args[1]):39284;
+            Path relayRoot=root.resolve("relay");Files.createDirectories(relayRoot);
+            var identity=IdentityStore.load(relayRoot);
+            try(var relay=new org.uzel.messenger.relay.RelayServer(identity,java.net.InetAddress.getByName("0.0.0.0"),port)){
+                String host=org.uzel.messenger.chat.LocalAddress.preferred();
+                System.out.println("Uzelio relay слушает TCP "+relay.port());
+                System.out.println("relay="+(host.isEmpty()?"<публичный-адрес>":host)+":"+relay.port()+":"+relay.pin());
+                System.out.println("Этот адрес вставьте в приглашение. Нужен доступный извне TCP-порт. Ctrl+C — остановить.");
+                new java.util.concurrent.CountDownLatch(1).await();
+            }
+            return;
+        }
         FileChannel channel=FileChannel.open(root.resolve("instance.lock"),StandardOpenOption.CREATE,StandardOpenOption.WRITE);FileLock lock;
         try{lock=channel.tryLock();}catch(OverlappingFileLockException e){lock=null;}
         if(lock==null){channel.close();JOptionPane.showMessageDialog(null,"Uzelio уже запущен. Откройте значок в области уведомлений.");return;}

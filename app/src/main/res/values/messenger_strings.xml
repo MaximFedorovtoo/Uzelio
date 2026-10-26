@@ -36,4 +36,6 @@
     <string name="chat_safety">Safety code: %1$s</string>
     <string name="chat_personal">Personal conversation</string>
     <string name="chat_storage">Your conversations stay with you. History is stored only on participants’ devices.</string>
+    <string name="chat_relay">Relay for different networks (optional)</string>
+    <string name="chat_relay_hint">host:port:pin printed by the relay host</string>
 </resources>

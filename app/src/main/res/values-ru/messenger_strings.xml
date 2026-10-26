@@ -36,4 +36,6 @@
     <string name="chat_safety">Код безопасности: %1$s</string>
     <string name="chat_personal">Личная переписка</string>
     <string name="chat_storage">Ваши разговоры — у вас. История хранится только на устройствах участников.</string>
+    <string name="chat_relay">Relay для разных сетей (необязательно)</string>
+    <string name="chat_relay_hint">host:port:pin — печатает узел relay</string>
 </resources>
