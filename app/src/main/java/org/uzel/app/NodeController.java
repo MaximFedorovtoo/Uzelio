@@ -59,6 +59,7 @@ public final class NodeController {
     private volatile AutoDiscoveryManager automatic;
     private volatile String bootstrapUrl="",pendingAutoId="";
     private long autoMeshRetryAt;
+    private volatile boolean chatLinkRequested;
     private volatile boolean bootstrapHosting;
     private volatile long requestedShareRateBps;
     private volatile PeerDiscovery discovery;
@@ -164,6 +165,19 @@ public final class NodeController {
         if(!sharingRequested){owner.stopSelf();return;}
         if(service!=null && service!=owner)return;
         service=owner;
+        startNode(owner);
+    }
+    /** Chat-level node: pairing and discovery without starting any VPN service. */
+    public synchronized void startChatLink(){
+        if(node!=null || busy)return;
+        chatLinkRequested=true;
+        startNode(null);
+    }
+    public synchronized void stopChatLink(){
+        if(service!=null)return;
+        chatLinkRequested=false;stopResources();status="OFF";
+    }
+    private void startNode(UzelVpnService owner){
         if(node!=null || busy)return;
         busy=true;status="STARTING";long epoch=generation.get();
         work.execute(()->{
@@ -179,7 +193,7 @@ public final class NodeController {
                 }
                 Node created=new Node(DeviceIdentity.load(),access,PublicAddress::allowed,secret);
                 synchronized(this){
-                    if(epoch!=generation.get() || !sharingRequested || service!=owner){created.close();return;}
+                    if(epoch!=generation.get() || (owner==null?!chatLinkRequested:!sharingRequested) || (owner!=null&&service!=owner)){created.close();return;}
                     created.setShareRateLimit(requestedShareRateBps);created.start(39281);node=created;physical=access;
                     pairing=new PairingManager(context,access,created,new PairingManager.Listener(){
                         public void available(Invitation invitation){
@@ -209,7 +223,7 @@ public final class NodeController {
                 }
                 fetchCountry(access,created,epoch);
                 calibrate(created,access,epoch);
-                if(epoch==generation.get()){status="SHARING";refreshPeers();}
+                if(epoch==generation.get()){status=owner==null?"CHAT_LINK":"SHARING";refreshPeers();}
             }catch(Exception e){if(epoch==generation.get())status=errorCode(e);}
             finally{if(epoch==generation.get())busy=false;}
         });
@@ -400,32 +414,8 @@ public final class NodeController {
             peer.autoDiscovered=true;peer.announced=true;peer.presence=presence;
             if(!peer.paired){peer.country=presence.country;peer.clients=presence.clients;peer.upload=presence.upload;peer.freeSlots=Math.max(0,3-presence.clients);peer.expiresAt=presence.expiresAt;}
         }
-        maybeAutoMesh(expected);
     }
-    /**
-     * Joins the network without a tap: when a sharing peer is visible in the catalog and no
-     * session exists yet, the device with the larger fingerprint connects to the smaller one.
-     * The deterministic direction prevents both devices from dialling each other.
-     */
-    private synchronized void maybeAutoMesh(Node expected){
-        if(!prefs.getBoolean("autoMesh",true))return;
-        if(vpnConnected||busy||!pendingAutoId.isEmpty())return;
-        if(expected.clientCount()>0)return;
-        long now=System.currentTimeMillis();
-        if(now<autoMeshRetryAt)return;
-        String own=expected.invitation("127.0.0.1").fingerprint;
-        Peer best=null;
-        for(Peer peer:peers.values()){
-            if(peer.presence==null||peer.presence.expiresAt<=now)continue;
-            if(peer.id.compareTo(own)>=0)continue;
-            if(peer.presence.upload<=0)continue;
-            if(best==null||peer.presence.clients<best.presence.clients)best=peer;
-        }
-        if(best==null)return;
-        autoMeshRetryAt=now+60_000L;
-        final String target=best.id;
-        work.execute(()->{synchronized(this){if(!vpnConnected&&!busy&&pendingAutoId.isEmpty())connect(target);}});
-    }    private void verifyAutomaticPeer(Node expected,Peer peer,long epoch){
+    private void verifyAutomaticPeer(Node expected,Peer peer,long epoch){
         String selected=peer.id;long selectedVpnEpoch=vpnGeneration.get();
         peerWork.execute(()->{
             try{

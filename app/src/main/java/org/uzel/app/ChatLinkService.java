@@ -69,6 +69,8 @@ public final class ChatLinkService extends Service {
         }
         // A restarted process has no listener yet: recreate it on the application instance.
         try { AndroidMessenger.chats(this); } catch (RuntimeException ignored) {/* The Chats tab reports it. */}
+        // Chat-level node: pairing and discovery without starting any VPN service.
+        try { NodeController.get(this).startChatLink(); } catch (RuntimeException ignored) {/* Direct delivery still works. */}
         return START_STICKY;
     }
 

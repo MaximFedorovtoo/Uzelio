@@ -128,10 +128,16 @@ public final class ChatService implements AutoCloseable {
         var outbound=messenger.send(invite.address(),"call_"+UUID.randomUUID().toString().replace("-",""),frame,(records,ignored)->{});
         try{
             deliveries.execute(()->{
-                try{transport.exchange(invite,outbound);}
-                catch(Exception direct){
-                    try{RelayClient fallback=relay(invite);if(fallback!=null)fallback.send(invite.address().getName(),outbound);}
-                    catch(Exception ignored){/* Signaling is best effort. */}
+                // A call may start before the P2P session is ready: repeat the frame a few times
+                // instead of dropping the offer on the first failed attempt.
+                for(int attempt=0;attempt<8;attempt++){
+                    try{transport.exchange(invite,outbound);return;}
+                    catch(Exception direct){
+                        try{RelayClient fallback=relay(invite);if(fallback!=null){fallback.send(invite.address().getName(),outbound);return;}}
+                        catch(Exception ignored){/* Try again. */}
+                    }
+                    try{Thread.sleep(1500);}
+                    catch(InterruptedException stopped){Thread.currentThread().interrupt();return;}
                 }
             });
         }catch(RejectedExecutionException full){/* Signaling is best effort. */}

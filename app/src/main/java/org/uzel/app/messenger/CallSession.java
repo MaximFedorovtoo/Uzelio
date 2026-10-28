@@ -281,7 +281,7 @@ public final class CallSession implements AutoCloseable {
             peer.createOffer(new SdpAdapter(){
                 @Override public void onCreateSuccess(SessionDescription description){submit(()->setLocalDescription(description));}
             },new MediaConstraints());
-        }catch(RuntimeException|LinkageError failure){fail();}
+        }catch(RuntimeException|LinkageError failure){android.util.Log.e("uzelio.call","setup failed",failure);fail();}
     }
 
     private void prepareIncoming(){
@@ -298,7 +298,7 @@ public final class CallSession implements AutoCloseable {
                 });}
                 @Override public void onSetFailure(String error){submit(CallSession.this::fail);}
             },new SessionDescription(SessionDescription.Type.OFFER,offer));
-        }catch(RuntimeException|LinkageError failure){fail();}
+        }catch(RuntimeException|LinkageError failure){android.util.Log.e("uzelio.call","setup failed",failure);fail();}
     }
 
     private void createAnswer(){
@@ -339,7 +339,7 @@ public final class CallSession implements AutoCloseable {
         if(kind==0)return;
         localDescriptionSent=true;
         try{service.sendCall(contactId,kind,callId,local.description);}
-        catch(Exception failure){fail();}
+        catch(Exception failure){android.util.Log.e("uzelio.call","send failed",failure);fail();}
     }
 
     private void createPeerConnection(){
@@ -357,9 +357,10 @@ public final class CallSession implements AutoCloseable {
         PeerConnectionFactory created=null;
         try{
             PeerConnectionFactory.Options options=new PeerConnectionFactory.Options();
-            // Media may ride the Uzelio tunnel: when both devices share one network, the VPN
-            // interface is the only direct path between them.
-            options.networkIgnoreMask=PeerConnectionFactory.Options.ADAPTER_TYPE_LOOPBACK;
+            // Media must use the physical network: the phone may have any third-party VPN active,
+            // and routing call traffic through it would break the direct path.
+            options.networkIgnoreMask=PeerConnectionFactory.Options.ADAPTER_TYPE_VPN
+                    |PeerConnectionFactory.Options.ADAPTER_TYPE_LOOPBACK;
             created=PeerConnectionFactory.builder().setOptions(options)
                     .setAudioDeviceModule(module).createPeerConnectionFactory();
             if(created==null)throw new IllegalStateException("Peer connection factory");

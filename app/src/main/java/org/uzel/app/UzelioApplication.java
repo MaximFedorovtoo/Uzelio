@@ -16,11 +16,6 @@ public final class UzelioApplication extends Application {
         // Open the chat listener with the application, not only when the "Chats" tab is first shown,
         // so incoming messages are accepted while the process is alive.
         messenger.thenRun(()->{try{AndroidMessenger.chats(this);}catch(Exception ignored){/* The tab reports an unusable store instead of falling back. */}});
-        // Join the network by default: the pairing used by chat lives in the sharing node, while the
-        // VPN client stays a separate user action. An explicit "stop sharing" turns this off.
-        messenger.thenRun(()->{try{
-            if(getSharedPreferences("node",MODE_PRIVATE).getBoolean("autoShare",true))NodeController.get(this).startSharing();
-        }catch(RuntimeException ignored){/* Sharing is optional; chat can still use a direct path. */}});
         // Hold the process while the app is off screen, so the chat listener keeps delivering
         // messages and call offers; the foreground notification is silent and can be stopped.
         ChatLinkService.start(this);
