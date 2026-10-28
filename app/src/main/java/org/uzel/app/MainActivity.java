@@ -64,6 +64,8 @@ public class MainActivity extends Activity {
     private PeerArtwork searchArtwork;
     private ScrollView pageScroll;
     private org.uzel.app.messenger.MessengerScreen messengerScreen;
+    public static volatile boolean visible;
+    public static volatile int activeTab;
 
     @Override protected void attachBaseContext(Context base) {
         String language = base.getSharedPreferences("ui", MODE_PRIVATE).getString("language", "");
@@ -79,6 +81,9 @@ public class MainActivity extends Activity {
         controller = NodeController.get(this);
         messengerScreen = new org.uzel.app.messenger.MessengerScreen(this,state);
         if (state != null) { selectedTab = state.getInt("tab"); selectedRegion=state.getInt("region"); pendingPeer = state.getString("pendingPeer");connectionPeer=state.getString("connectionPeer","");connectionName=state.getString("connectionName","");connectionRequested=state.getBoolean("connectionRequested",false); }
+        Intent requested=getIntent();
+        int requestedTab=requested==null?-1:requested.getIntExtra("tab",-1);
+        if(requestedTab>=0)selectedTab=requestedTab;
         getWindow().setStatusBarColor(BG); getWindow().setNavigationBarColor(BG);
         getWindow().getDecorView().setSystemUiVisibility(0);
         LinearLayout root = column(); root.setBackgroundColor(BG); root.setFitsSystemWindows(true);
@@ -90,8 +95,9 @@ public class MainActivity extends Activity {
         setContentView(root); showTab(selectedTab);
     }
     @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putInt("tab",selectedTab);if(messengerScreen!=null)messengerScreen.saveState(out);out.putInt("region",selectedRegion); out.putString("pendingPeer",pendingPeer);out.putString("connectionPeer",connectionPeer);out.putString("connectionName",connectionName);out.putBoolean("connectionRequested",connectionRequested); }
-    @Override protected void onResume() { super.onResume(); handler.removeCallbacks(ticker); ticker.run(); }
-    @Override protected void onPause() { handler.removeCallbacks(ticker); super.onPause(); }
+    @Override protected void onResume() { super.onResume(); visible=true; activeTab=selectedTab; handler.removeCallbacks(ticker); ticker.run(); }
+    @Override protected void onPause() { visible=false; handler.removeCallbacks(ticker); super.onPause(); }
+    @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); int tab=intent==null?-1:intent.getIntExtra("tab",-1); if(tab>=0)showTab(tab); }
     @Override public void onBackPressed(){if(selectedTab==4&&messengerScreen.backToContacts())return;if(selectedTab!=0){showTab(0);return;}super.onBackPressed();}
     @Override protected void onDestroy(){if(messengerScreen!=null)messengerScreen.close();super.onDestroy();}
     private String s(String key,Object... args) { int id=stringResource(key); return args.length==0?getString(id):getString(id,args); }
@@ -219,7 +225,7 @@ public class MainActivity extends Activity {
         }
     }
     private void showTab(int tab) {
-        selectedTab=tab; content.removeAllViews(); nav.removeAllViews(); peerSignature="";
+        selectedTab=tab; activeTab=tab; content.removeAllViews(); nav.removeAllViews(); peerSignature="";
         status=address=shareValue=receivedValue=rateValue=clientsValue=limitValue=detail=null; publicSwitch=null; publicDetail=null; peers=null; sharingButton=vpnButton=measureButton=null;
         pairingDetail=null;pairingCreate=pairingImport=pairingShare=null;discoveryDetail=bootstrapAddress=null;
         connectionProgress=null;

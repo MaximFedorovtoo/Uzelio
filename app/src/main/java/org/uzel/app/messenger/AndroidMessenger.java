@@ -4,6 +4,7 @@ import org.uzel.messenger.MessengerRuntime;
 import org.uzel.messenger.chat.ChatService;
 import org.uzel.messenger.chat.ChatTransport;
 import org.uzel.app.NodeController;
+import org.uzel.app.MainActivity;
 import org.uzel.app.UzelioApplication;
 import org.uzel.app.DeviceIdentity;
 import org.uzel.core.NetworkAccess;
@@ -27,7 +28,12 @@ public final class AndroidMessenger {
             ChatTransport.Factory factory=(authorizer,receiver)->new AndroidChatTransport(identity,
                     ChatTransport.pinned(identity,network,InetAddress.getByName("0.0.0.0"),39283,authorizer,receiver),
                     fingerprint->NodeController.get(app).openChatStream(fingerprint));
-            return new ChatService(runtime,identity,factory,network);
+            ChatService service=new ChatService(runtime,identity,factory,network);
+            service.listener((contactId,message)->{
+                if(MainActivity.visible&&MainActivity.activeTab==4)return;
+                ChatNotifications.show(app,service.contactName(contactId),message.text());
+            });
+            return service;
         }catch(Exception e){throw new CompletionException(e);}});
         return chats;
     }

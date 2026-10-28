@@ -20,6 +20,10 @@ public final class ChatService implements AutoCloseable {
     private final NetworkAccess network;
     private final Map<String,RelayClient> relays=new ConcurrentHashMap<>();
     private final Map<String,ChatInvite> invites=new ConcurrentHashMap<>();
+    @FunctionalInterface public interface Listener { void incoming(String contactId,ChatRepository.Message message); }
+    private volatile Listener listener=(contactId,message)->{};
+    /** UI notification hook; a failing listener never changes delivery or storage. */
+    public void listener(Listener value){listener=value==null?(contactId,message)->{}:value;}
     private final ScheduledExecutorService retries=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"chat-outbox");t.setDaemon(true);return t;});
     private final AtomicBoolean queuedRetry=new AtomicBoolean();
     private final Set<String> activeContacts=ConcurrentHashMap.newKeySet();
@@ -53,6 +57,7 @@ public final class ChatService implements AutoCloseable {
         return code;
     }
     public List<ChatRepository.Contact> contacts()throws Exception {ensureOpen();return repository.contacts();}
+    public String contactName(String contactId){try{var contact=repository.contact(contactId);return contact==null?"Uzelio":contact.name();}catch(Exception unavailable){return "Uzelio";}}
     public List<ChatRepository.Message> history(String contactId)throws Exception {ensureOpen();requireContact(contactId);return repository.history(contactId);}
     /** Import only after comparing the safety code through an authenticated out-of-band channel. */
     public synchronized ChatRepository.Contact addContact(String code,String name)throws Exception {
@@ -136,16 +141,23 @@ public final class ChatService implements AutoCloseable {
     private SignalMessenger.Outbound receiveFrom(ChatInvite invite,SignalMessenger.Outbound wire,boolean acknowledgementOnly)throws Exception {
         ensureOpen();
         final ChatWire.Frame[] frame=new ChatWire.Frame[1];
+        final boolean[] fresh=new boolean[1];
         messenger.receive(invite.address(),wire.type(),wire.body(),(records,received)->{
             ChatWire.Frame decoded=ChatWire.decode(received.plaintext());frame[0]=decoded;
+            fresh[0]=!received.duplicate();
             if(acknowledgementOnly&&decoded.kind()!=ChatWire.ACK)throw new SecurityException("Expected an authenticated receipt");
             if(decoded.kind()==ChatWire.TEXT)repository.receiveText(records,new ChatRepository.Message(decoded.id(),invite.id(),decoded.text(),false,"received",decoded.timeMillis()));
             else {repository.delivered(records,invite.id(),decoded.id());messenger.discardOutbox(records,invite.address(),decoded.id());}
         });
+        if(frame[0].kind()==ChatWire.TEXT&&fresh[0])notifyIncoming(invite,frame[0]);
         if(frame[0].kind()==ChatWire.ACK)return null;
         // The stable operation ID reuses exactly the same encrypted ACK after packet loss/restart.
         String operation="ack_"+Base64.getUrlEncoder().withoutPadding().encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(frame[0].id().getBytes(StandardCharsets.US_ASCII)));
         return messenger.send(invite.address(),operation,ChatWire.encode(new ChatWire.Frame(ChatWire.ACK,frame[0].id(),0,"")));
+    }
+    private void notifyIncoming(ChatInvite invite,ChatWire.Frame frame){
+        try{listener.incoming(invite.id(),new ChatRepository.Message(frame.id(),invite.id(),frame.text(),false,"received",frame.timeMillis()));}
+        catch(RuntimeException ignored){/* A notification must never affect delivery or storage. */}
     }
     private ChatRepository.Contact requireContact(String id)throws Exception {var contact=repository.contact(id);if(contact==null)throw new IllegalArgumentException("Unknown chat contact");return contact;}
     private void retrySoon(){if(!closed&&queuedRetry.compareAndSet(false,true))try{retries.execute(()->{try{retryQuietly();}finally{queuedRetry.set(false);}});}catch(RejectedExecutionException stopped){queuedRetry.set(false);}}

@@ -8,6 +8,7 @@ import java.util.concurrent.CompletableFuture;
 public final class UzelioApplication extends Application {
     private CompletableFuture<MessengerRuntime> messenger;
     @Override public void onCreate(){super.onCreate();
+        org.uzel.app.messenger.ChatNotifications.ensure(this);
         messenger=CompletableFuture.supplyAsync(()->{try{return AndroidMessenger.open(this);}catch(Exception e){throw new java.util.concurrent.CompletionException(e);}});
         // Open the chat listener with the application, not only when the "Chats" tab is first shown,
         // so incoming messages are accepted while the process is alive.

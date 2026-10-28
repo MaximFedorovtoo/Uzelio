@@ -16,6 +16,7 @@ public final class DesktopMessenger {
     private static CompletableFuture<MessengerRuntime> runtime;
     private static CompletableFuture<ChatService> chats;
     private static DesktopChatTransport.ChatStreams streams;
+    private static volatile java.util.function.BiConsumer<String,String> notifier=(name,text)->{};
     private DesktopMessenger(){}
     public static MessengerRuntime open(Path appData)throws Exception{return MessengerRuntime.open(appData.resolve("messenger"),new WindowsKeyProtector(),JdbcMessageStore::new);}
     public static synchronized CompletableFuture<MessengerRuntime> start(Path appData){
@@ -26,6 +27,8 @@ public final class DesktopMessenger {
     public static synchronized CompletableFuture<MessengerRuntime> runtime(){if(runtime==null)throw new IllegalStateException("Messenger has not started");return runtime;}
     /** Installs the paired P2P fallback used only after the direct pinned mTLS address fails. */
     public static synchronized void useChatStreams(DesktopChatTransport.ChatStreams provider){streams=provider;}
+    /** Tray notification hook; a failing notifier never affects delivery or storage. */
+    public static void useNotifier(java.util.function.BiConsumer<String,String> value){notifier=value==null?(name,text)->{}:value;}
     public static synchronized CompletableFuture<ChatService> chats(Path appData){
         if(chats==null||chats.isCompletedExceptionally()){
             DesktopChatTransport.ChatStreams p2p=streams;
@@ -36,7 +39,9 @@ public final class DesktopMessenger {
                     ChatTransport direct=ChatTransport.pinned(identity,network,InetAddress.getByName("0.0.0.0"),CHAT_PORT,authorizer,receiver);
                     return p2p==null?direct:new DesktopChatTransport(identity,direct,p2p);
                 };
-                return new ChatService(r,identity,factory,network);
+                ChatService service=new ChatService(r,identity,factory,network);
+                service.listener((contactId,message)->notifier.accept(service.contactName(contactId),message.text()));
+                return service;
             }catch(Exception e){throw new java.util.concurrent.CompletionException(e);}});
         }
         return chats;
