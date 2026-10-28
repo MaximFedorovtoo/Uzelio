@@ -38,4 +38,21 @@
     <string name="chat_storage">Ваши разговоры — у вас. История хранится только на устройствах участников.</string>
     <string name="chat_relay">Relay для разных сетей (необязательно)</string>
     <string name="chat_relay_hint">host:port:pin — печатает узел relay</string>
+    <string name="chat_attach">Прикрепить файл</string>
+    <string name="chat_voice_record">Записать голосовое сообщение</string>
+    <string name="chat_voice_stop">Остановить запись</string>
+    <string name="chat_voice_recording">Запись…</string>
+    <string name="chat_voice_limit">Запись остановлена: голосовое сообщение — не дольше 2 минут.</string>
+    <string name="chat_mic_denied">Для записи голосовых сообщений нужен доступ к микрофону.</string>
+    <string name="chat_voice_failed">Не удалось записать голосовое сообщение.</string>
+    <string name="chat_voice_name">Голосовое сообщение</string>
+    <string name="chat_file_too_large">Файл больше 8 МБ.</string>
+    <string name="chat_file_empty">Файл пуст.</string>
+    <string name="chat_file_unreadable">Не удалось прочитать файл.</string>
+    <string name="chat_file_fallback">файл</string>
+    <string name="chat_play">Воспроизвести</string>
+    <string name="chat_save">Сохранить в Загрузки</string>
+    <string name="chat_saved">Сохранено в Загрузки/Uzelio</string>
+    <string name="chat_save_failed">Не удалось сохранить файл.</string>
+    <string name="chat_play_failed">Не удалось воспроизвести аудио.</string>
 </resources>

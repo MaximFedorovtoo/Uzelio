@@ -60,6 +60,8 @@ public final class ChatService implements AutoCloseable {
     public List<ChatRepository.Contact> contacts()throws Exception {ensureOpen();return repository.contacts();}
     public String contactName(String contactId){try{var contact=repository.contact(contactId);return contact==null?"Uzelio":contact.name();}catch(Exception unavailable){return "Uzelio";}}
     public List<ChatRepository.Message> history(String contactId)throws Exception {ensureOpen();requireContact(contactId);return repository.history(contactId);}
+    /** Decrypted attachment bytes for a stored file message, or null when it has none. */
+    public byte[] attachment(String messageId)throws Exception {ensureOpen();return repository.blob(messageId);}
     /** Import only after comparing the safety code through an authenticated out-of-band channel. */
     public synchronized ChatRepository.Contact addContact(String code,String name)throws Exception {
         ensureOpen();ChatInvite invite=ChatInvite.decode(code==null?null:code.trim());
@@ -194,6 +196,7 @@ public final class ChatService implements AutoCloseable {
                     if(complete!=null){
                         repository.receiveFile(records,new ChatRepository.Message(chunk.id(),invite.id(),"",false,"received",assembly.time(),assembly.attachment()),complete);
                         assemblies.remove(key(invite.id(),chunk.id()));
+                        try{listener.incoming(invite.id(),new ChatRepository.Message(chunk.id(),invite.id(),"",false,"received",assembly.time(),assembly.attachment()));}catch(RuntimeException ignored){/* notification only */}
                     }
                 }
             }else{

@@ -38,4 +38,21 @@
     <string name="chat_storage">Your conversations stay with you. History is stored only on participants’ devices.</string>
     <string name="chat_relay">Relay for different networks (optional)</string>
     <string name="chat_relay_hint">host:port:pin printed by the relay host</string>
+    <string name="chat_attach">Attach file</string>
+    <string name="chat_voice_record">Record voice message</string>
+    <string name="chat_voice_stop">Stop recording</string>
+    <string name="chat_voice_recording">Recording…</string>
+    <string name="chat_voice_limit">Recording stopped: voice messages are limited to 2 minutes.</string>
+    <string name="chat_mic_denied">Microphone access is required to record voice messages.</string>
+    <string name="chat_voice_failed">Could not record the voice message.</string>
+    <string name="chat_voice_name">Voice message</string>
+    <string name="chat_file_too_large">The file is larger than 8 MB.</string>
+    <string name="chat_file_empty">The file is empty.</string>
+    <string name="chat_file_unreadable">Could not read the file.</string>
+    <string name="chat_file_fallback">file</string>
+    <string name="chat_play">Play</string>
+    <string name="chat_save">Save to Downloads</string>
+    <string name="chat_saved">Saved to Downloads/Uzelio</string>
+    <string name="chat_save_failed">Could not save the file.</string>
+    <string name="chat_play_failed">Could not play this audio.</string>
 </resources>

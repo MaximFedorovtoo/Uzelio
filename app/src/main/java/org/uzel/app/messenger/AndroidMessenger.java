@@ -31,7 +31,7 @@ public final class AndroidMessenger {
             ChatService service=new ChatService(runtime,identity,factory,network);
             service.listener((contactId,message)->{
                 if(MainActivity.visible&&MainActivity.activeTab==4)return;
-                ChatNotifications.show(app,service.contactName(contactId),message.text());
+                ChatNotifications.show(app,service.contactName(contactId),message.text().isBlank()&&message.attachment()!=null?"Файл: "+message.attachment().name():message.text());
             });
             return service;
         }catch(Exception e){throw new CompletionException(e);}});

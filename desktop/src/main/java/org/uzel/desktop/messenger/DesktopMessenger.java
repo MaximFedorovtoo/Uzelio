@@ -40,7 +40,7 @@ public final class DesktopMessenger {
                     return p2p==null?direct:new DesktopChatTransport(identity,direct,p2p);
                 };
                 ChatService service=new ChatService(r,identity,factory,network);
-                service.listener((contactId,message)->notifier.accept(service.contactName(contactId),message.text()));
+                service.listener((contactId,message)->notifier.accept(service.contactName(contactId),message.text().isBlank()&&message.attachment()!=null?"Файл: "+message.attachment().name():message.text()));
                 return service;
             }catch(Exception e){throw new java.util.concurrent.CompletionException(e);}});
         }
