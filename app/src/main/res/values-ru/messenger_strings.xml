@@ -65,4 +65,6 @@
     <string name="call_decline">Отклонить</string>
     <string name="chat_delete">Удалить</string>
     <string name="chat_delete_message">Удалить чат и всю историю на этом устройстве?</string>
+    <string name="chat_paste">Вставить</string>
+    <string name="chat_share">Поделиться</string>
 </resources>

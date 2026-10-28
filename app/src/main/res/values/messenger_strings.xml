@@ -65,4 +65,6 @@
     <string name="call_decline">Decline</string>
     <string name="chat_delete">Delete</string>
     <string name="chat_delete_message">Delete this chat and its history on this device?</string>
+    <string name="chat_paste">Paste</string>
+    <string name="chat_share">Share</string>
 </resources>

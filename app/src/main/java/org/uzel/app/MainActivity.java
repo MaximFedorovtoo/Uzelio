@@ -98,7 +98,7 @@ public class MainActivity extends Activity {
         messengerScreen = new org.uzel.app.messenger.MessengerScreen(this,state);
         if (state != null) { selectedTab = state.getInt("tab"); selectedRegion=state.getInt("region"); pendingPeer = state.getString("pendingPeer");connectionPeer=state.getString("connectionPeer","");connectionName=state.getString("connectionName","");connectionRequested=state.getBoolean("connectionRequested",false); }
         Intent requested=getIntent();
-        int requestedTab=requested==null?-1:requested.getIntExtra("tab",-1);
+        String sharedCode=shareCode(requested);int requestedTab=requested==null?-1:requested.getIntExtra("tab",-1);if(!sharedCode.isEmpty())requestedTab=4;
         if(requestedTab>=0)selectedTab=requestedTab;
         getWindow().setStatusBarColor(VOID); getWindow().setNavigationBarColor(VOID);
         getWindow().getDecorView().setSystemUiVisibility(0);
@@ -108,12 +108,13 @@ public class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this);pageScroll=scroll; scroll.setFillViewport(true);scroll.setVerticalScrollBarEnabled(false); content = column(); content.setPadding(dp(14),dp(8),dp(14),dp(BOTTOM_CONTENT_INSET_DP)); scroll.addView(content);
         root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         nav = new LinearLayout(this); nav.setGravity(Gravity.CENTER); nav.setBackground(navSurface()); nav.setPadding(dp(8),dp(6),dp(8),dp(8)); nav.setClipToOutline(true); root.addView(nav);
-        setContentView(root); showTab(selectedTab); String chat=getIntent().getStringExtra("chat");if(chat!=null&&!chat.isEmpty()&&messengerScreen!=null)messengerScreen.openContact(chat);
+        setContentView(root); showTab(selectedTab); if(messengerScreen!=null&&!sharedCode.isEmpty())messengerScreen.openAddContact(sharedCode); String chat=getIntent().getStringExtra("chat");if(chat!=null&&!chat.isEmpty()&&messengerScreen!=null)messengerScreen.openContact(chat);
     }
     @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putInt("tab",selectedTab);if(messengerScreen!=null)messengerScreen.saveState(out);out.putInt("region",selectedRegion); out.putString("pendingPeer",pendingPeer);out.putString("connectionPeer",connectionPeer);out.putString("connectionName",connectionName);out.putBoolean("connectionRequested",connectionRequested); }
     @Override protected void onResume() { super.onResume(); visible=true; activeTab=selectedTab; handler.removeCallbacks(ticker); ticker.run(); }
     @Override protected void onPause() { visible=false; handler.removeCallbacks(ticker); super.onPause(); }
-    @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); int tab=intent==null?-1:intent.getIntExtra("tab",-1); if(tab>=0)showTab(tab); }
+    @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); String shared=shareCode(intent); int tab=intent==null?-1:intent.getIntExtra("tab",-1); if(!shared.isEmpty()){showTab(4);if(messengerScreen!=null)messengerScreen.openAddContact(shared);return;} if(tab>=0)showTab(tab); }
+    private static String shareCode(Intent intent){ if(intent==null||!Intent.ACTION_SEND.equals(intent.getAction()))return ""; CharSequence text=intent.getCharSequenceExtra(Intent.EXTRA_TEXT); if(text==null)return ""; String value=text.toString(); int start=value.indexOf("uzelio-chat:"); return start<0?"":value.substring(start).trim(); }
     @Override public void onBackPressed(){if(selectedTab==4&&messengerScreen.backToContacts())return;if(selectedTab!=0){showTab(0);return;}super.onBackPressed();}
     @Override protected void onDestroy(){if(messengerScreen!=null)messengerScreen.close();super.onDestroy();}
     private String s(String key,Object... args) { int id=stringResource(key); return args.length==0?getString(id):getString(id,args); }
