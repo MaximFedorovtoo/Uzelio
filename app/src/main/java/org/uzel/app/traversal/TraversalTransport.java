@@ -24,6 +24,7 @@ public final class TraversalTransport implements AutoCloseable {
     private static final int WINDOW=96*1024,MAX_SDP=128*1024;
     private static final Object FACTORY_LOCK=new Object();
     private static boolean initialized;
+    private static boolean networkMonitorSet;
     private static Network activeNetwork;
     private static int owners;
     private final Listener listener;
@@ -73,8 +74,12 @@ public final class TraversalTransport implements AutoCloseable {
                 Context app=context.getApplicationContext();
                 if(!initialized){PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(app).setEnableInternalTracer(false).createInitializationOptions());initialized=true;}
                 if(owners==0){
-                    NetworkMonitor.getInstance().setNetworkChangeDetectorFactory((observer,ignored)->new PhysicalNetworkDetector(observer,app,physical));
-                    activeNetwork=physical;
+                    if(!networkMonitorSet){
+                        try{
+                            NetworkMonitor.getInstance().setNetworkChangeDetectorFactory((observer,ignored)->new PhysicalNetworkDetector(observer,app,physical));
+                            networkMonitorSet=true;activeNetwork=physical;
+                        }catch(Throwable alreadySet){/* WebRTC allows one detector per process; reuse it. */}
+                    }
                 }
                 PeerConnectionFactory.Options options=new PeerConnectionFactory.Options();
                 options.networkIgnoreMask=PeerConnectionFactory.Options.ADAPTER_TYPE_VPN|PeerConnectionFactory.Options.ADAPTER_TYPE_LOOPBACK;
