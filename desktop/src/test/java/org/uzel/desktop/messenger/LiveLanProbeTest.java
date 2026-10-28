@@ -38,7 +38,8 @@ public final class LiveLanProbeTest {
         ChatService chat = new ChatService(runtime, identity, new NetworkAccess(), InetAddress.getByName(bind), 0);
         try {
             Path out = Path.of(outPath);
-            Files.writeString(out.resolveSibling(out.getFileName() + ".tmp"), chat.invitation(bind), StandardCharsets.UTF_8);
+            String relay = System.getenv().getOrDefault("UZELIO_RELAY", "");
+            Files.writeString(out.resolveSibling(out.getFileName() + ".tmp"), chat.invitation(bind, relay), StandardCharsets.UTF_8);
             Files.move(out.resolveSibling(out.getFileName() + ".tmp"), out, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
 
             String code = Files.readString(Path.of(peerPath), StandardCharsets.UTF_8).trim();

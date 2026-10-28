@@ -40,7 +40,9 @@ public final class LanChatProbeTest extends InstrumentationTestCase {
             String host = LocalAddress.preferred();
             ChatService chat = new ChatService(runtime, identity, new NetworkAccess(), InetAddress.getByName(host), 0);
             try {
-                Files.write(inviteFile, chat.invitation(host).getBytes(StandardCharsets.UTF_8));
+                Path relayFile = ext.resolve("lan-relay.txt");
+                String relay = Files.exists(relayFile) ? new String(Files.readAllBytes(relayFile), StandardCharsets.UTF_8).trim() : "";
+                Files.write(inviteFile, chat.invitation(host, relay).getBytes(StandardCharsets.UTF_8));
                 await(() -> Files.exists(peerFile), "desktop invitation");
                 String peer = new String(Files.readAllBytes(peerFile), StandardCharsets.UTF_8).trim();
 

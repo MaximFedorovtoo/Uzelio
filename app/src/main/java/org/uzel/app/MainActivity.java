@@ -44,6 +44,8 @@ public class MainActivity extends Activity {
             LINE=0x241DBEDE, LINE_STRONG=0x421DBEDE, GLASS=0xA00E1E2E;
     private static final int NAVY=TEXT, GREEN=ACCENT; // legacy aliases for the old call sites
     private static final int ANIM_PRESS=150, ANIM_PANEL=380;
+    // Last card must be able to scroll clear of the 74dp bottom bar on every screen.
+    private static final int BOTTOM_CONTENT_INSET_DP=88;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable ticker = new Runnable() { public void run() { refresh(); handler.postDelayed(this, 1000); } };
     private NodeController controller;
@@ -103,10 +105,10 @@ public class MainActivity extends Activity {
         LinearLayout root = column(); root.setBackground(oceanBackground()); root.setFitsSystemWindows(true);
         header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(18), dp(10), dp(14), dp(6));
         root.addView(header);
-        ScrollView scroll = new ScrollView(this);pageScroll=scroll; scroll.setFillViewport(true);scroll.setVerticalScrollBarEnabled(false); content = column(); content.setPadding(dp(14),dp(8),dp(14),dp(14)); scroll.addView(content);
+        ScrollView scroll = new ScrollView(this);pageScroll=scroll; scroll.setFillViewport(true);scroll.setVerticalScrollBarEnabled(false); content = column(); content.setPadding(dp(14),dp(8),dp(14),dp(BOTTOM_CONTENT_INSET_DP)); scroll.addView(content);
         root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         nav = new LinearLayout(this); nav.setGravity(Gravity.CENTER); nav.setBackground(navSurface()); nav.setPadding(dp(8),dp(6),dp(8),dp(8)); nav.setClipToOutline(true); root.addView(nav);
-        setContentView(root); showTab(selectedTab);
+        setContentView(root); showTab(selectedTab); String chat=getIntent().getStringExtra("chat");if(chat!=null&&!chat.isEmpty()&&messengerScreen!=null)messengerScreen.openContact(chat);
     }
     @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putInt("tab",selectedTab);if(messengerScreen!=null)messengerScreen.saveState(out);out.putInt("region",selectedRegion); out.putString("pendingPeer",pendingPeer);out.putString("connectionPeer",connectionPeer);out.putString("connectionName",connectionName);out.putBoolean("connectionRequested",connectionRequested); }
     @Override protected void onResume() { super.onResume(); visible=true; activeTab=selectedTab; handler.removeCallbacks(ticker); ticker.run(); }
@@ -290,7 +292,16 @@ public class MainActivity extends Activity {
         return new LayerDrawable(new android.graphics.drawable.Drawable[]{base,glow});
     }
     private LinearLayout card() { LinearLayout c=column(); c.setPadding(dp(16),dp(14),dp(16),dp(14)); c.setBackground(glassCard(22));c.setElevation(dp(6)); LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2); p.bottomMargin=dp(12);p.topMargin=dp(3); content.addView(c,p); return c; }
-    private Button button(LinearLayout parent,String text,boolean primary,Runnable action) { Button b=new Button(this){@Override public void setEnabled(boolean enabled){super.setEnabled(enabled);setAlpha(enabled?1f:.45f);}}; b.setText(text); b.setTextSize(14);b.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD)); b.setAllCaps(false); b.setTextColor(new ColorStateList(new int[][]{new int[]{-android.R.attr.state_enabled},new int[]{}},new int[]{MUTED2,primary?BG:TEXT})); b.setBackground(primary?new RippleDrawable(ColorStateList.valueOf(withAlpha(ACCENT,0x40)),primaryPill(),null):new RippleDrawable(ColorStateList.valueOf(withAlpha(ACCENT,0x24)),secondaryPill(),null)); b.setElevation(dp(primary?4:0));b.setPadding(dp(16),dp(10),dp(16),dp(10));b.setMinWidth(0);b.setMinimumWidth(0); b.setMinHeight(dp(50)); b.setLetterSpacing(0.01f); LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2); p.topMargin=dp(8); parent.addView(b,p); b.setOnClickListener(v->{press(v);action.run();}); return b; }
+    /** NetworkMapView paints a 1000x470 scene; sizing the view to that ratio removes letterboxing. */
+    private void bindMapAspect(View map) {
+        map.addOnLayoutChangeListener((v,left,top,right,bottom,oldLeft,oldTop,oldRight,oldBottom)->{
+            int width=right-left; if(width<=0)return;
+            int target=Math.round(width*0.47f)+dp(4);
+            ViewGroup.LayoutParams params=v.getLayoutParams();
+            if(params!=null&&params.height!=target){params.height=target;v.setLayoutParams(params);}
+        });
+    }
+    private Button button(LinearLayout parent,String text,boolean primary,Runnable action) { Button b=new Button(this){@Override public void setEnabled(boolean enabled){super.setEnabled(enabled);setAlpha(enabled?1f:.45f);}}; b.setText(text); b.setTextSize(14);b.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD)); b.setAllCaps(false); b.setTextColor(new ColorStateList(new int[][]{new int[]{-android.R.attr.state_enabled},new int[]{}},new int[]{MUTED2,primary?BG:TEXT})); b.setBackground(primary?new RippleDrawable(ColorStateList.valueOf(withAlpha(ACCENT,0x40)),primaryPill(),null):new RippleDrawable(ColorStateList.valueOf(withAlpha(ACCENT,0x24)),secondaryPill(),null)); b.setElevation(dp(primary?4:0));b.setPadding(dp(16),dp(8),dp(16),dp(8));b.setMinWidth(0);b.setMinimumWidth(0); b.setMinHeight(dp(50));b.setMinimumHeight(dp(50));b.setSingleLine(true);b.setMaxLines(1);b.setEllipsize(android.text.TextUtils.TruncateAt.END);b.setGravity(Gravity.CENTER); b.setLetterSpacing(0.01f); LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2); p.topMargin=dp(8); parent.addView(b,p); b.setOnClickListener(v->{press(v);action.run();}); return b; }
     private View iconButton(String kind,String description,Runnable action) {
         FrameLayout box=new FrameLayout(this);box.setContentDescription(description);box.setBackground(new RippleDrawable(ColorStateList.valueOf(withAlpha(ACCENT,0x2A)),rounded(withAlpha(TEXT,0x0A),999,LINE),null));
         PeerArtwork icon=new PeerArtwork(this,kind,TEXT);FrameLayout.LayoutParams ip=new FrameLayout.LayoutParams(dp(23),dp(23),Gravity.CENTER);box.addView(icon,ip);box.setOnClickListener(v->{press(v);action.run();});box.setFocusable(true);box.setMinimumHeight(dp(48));box.setMinimumWidth(dp(48));return box;
@@ -311,12 +322,14 @@ public class MainActivity extends Activity {
         headerStatus=null;headerDot=null;headerPill=null;headerTone=-1;headerText="";
         if(tab==0||tab==4){
             header.addView(brandView(),new LinearLayout.LayoutParams(0,-2,1));
-            header.addView(statusPillView(),new LinearLayout.LayoutParams(-2,-2));
+            LinearLayout.LayoutParams pillParams=new LinearLayout.LayoutParams(-2,-2);pillParams.setMarginEnd(dp(8));
+            header.addView(statusPillView(),pillParams);
             header.addView(iconButton("settings",s("settings"),()->showTab(3)),new LinearLayout.LayoutParams(dp(48),dp(48)));
         }else{
             View back=iconButton("back",s("home"),()->showTab(0));back.setBackground(null);header.addView(back,new LinearLayout.LayoutParams(dp(48),dp(48)));
-            TextView pageTitle=label(tab==1?getString(R.string.ui_map):s(tab==2?"statistics":"settings"),24,TEXT,true);pageTitle.setSingleLine(true);pageTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);header.addView(pageTitle,new LinearLayout.LayoutParams(0,-2,1));
-            header.addView(statusPillView(),new LinearLayout.LayoutParams(-2,-2));
+            TextView pageTitle=label(tab==1?getString(R.string.ui_map):s(tab==2?"statistics":"settings"),24,TEXT,true);pageTitle.setSingleLine(true);pageTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);pageTitle.setAutoSizeTextTypeUniformWithConfiguration(15,24,1,android.util.TypedValue.COMPLEX_UNIT_SP);header.addView(pageTitle,new LinearLayout.LayoutParams(0,-2,1));
+            LinearLayout.LayoutParams pillParams=new LinearLayout.LayoutParams(-2,-2);pillParams.setMarginEnd(dp(8));
+            header.addView(statusPillView(),pillParams);
         }
     }
     private LinearLayout brandView(){
@@ -329,7 +342,7 @@ public class MainActivity extends Activity {
     private LinearLayout statusPillView(){
         LinearLayout pill=new LinearLayout(this);pill.setOrientation(LinearLayout.HORIZONTAL);pill.setGravity(Gravity.CENTER_VERTICAL);pill.setPadding(dp(10),dp(6),dp(12),dp(6));pill.setBackground(statusPill(MUTED2));
         headerDot=new View(this);headerDot.setBackground(dot(MUTED2));LinearLayout.LayoutParams dotParams=new LinearLayout.LayoutParams(dp(7),dp(7));dotParams.setMarginEnd(dp(6));pill.addView(headerDot,dotParams);
-        headerStatus=label("",11,TEXT,true);headerStatus.setSingleLine(true);headerStatus.setEllipsize(android.text.TextUtils.TruncateAt.END);headerStatus.setMaxWidth(dp(148));headerStatus.setPadding(0,0,0,0);headerStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);pill.addView(headerStatus);
+        headerStatus=label("",11,TEXT,true);headerStatus.setSingleLine(true);headerStatus.setEllipsize(android.text.TextUtils.TruncateAt.END);headerStatus.setMaxWidth(dp(120));headerStatus.setPadding(0,0,0,0);headerStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);pill.addView(headerStatus);
         headerPill=pill;return pill;
     }
     private void updateHeaderState(NodeController.Snapshot x,boolean connecting){
@@ -347,6 +360,8 @@ public class MainActivity extends Activity {
     }
     private void showTab(int tab) {
         selectedTab=tab; activeTab=tab; content.removeAllViews(); nav.removeAllViews(); peerSignature="";homeDot=null;homeTone=-1;
+        // Chat owns the whole viewport (composer stays above the bar); cards keep a scroll-safe tail.
+        content.setPadding(dp(14),dp(8),dp(14),dp(tab==4?10:BOTTOM_CONTENT_INSET_DP));
         status=address=shareValue=receivedValue=rateValue=clientsValue=limitValue=detail=null; publicSwitch=null; publicDetail=null; peers=null; sharingButton=vpnButton=measureButton=null;
         pairingDetail=null;pairingCreate=pairingImport=pairingShare=null;discoveryDetail=bootstrapAddress=null;
         connectionProgress=null;
@@ -367,7 +382,7 @@ public class MainActivity extends Activity {
             if(activePill!=null)revealPill(activePill);
         }
         buildHeader(tab);
-        if(tab==0) home(); else if(tab==1) nodes(); else if(tab==2) statistics(); else if(tab==4){if(messengerScreen.getParent()!=null)((ViewGroup)messengerScreen.getParent()).removeView(messengerScreen);content.addView(messengerScreen,new LinearLayout.LayoutParams(-1,Math.max(dp(420),pageScroll.getHeight()-dp(12))));pageScroll.post(()->{if(selectedTab==4&&messengerScreen.getParent()!=null){int height=pageScroll.getHeight()-dp(12);if(height>0)messengerScreen.setLayoutParams(new LinearLayout.LayoutParams(-1,Math.max(dp(420),height)));}});messengerScreen.refresh();}else settings();
+        if(tab==0) home(); else if(tab==1) nodes(); else if(tab==2) statistics(); else if(tab==4){if(messengerScreen.getParent()!=null)((ViewGroup)messengerScreen.getParent()).removeView(messengerScreen);int available=Math.max(dp(420),pageScroll.getHeight()-content.getPaddingTop()-content.getPaddingBottom());content.addView(messengerScreen,new LinearLayout.LayoutParams(-1,available));pageScroll.post(()->{if(selectedTab==4&&messengerScreen.getParent()!=null){int height=pageScroll.getHeight()-content.getPaddingTop()-content.getPaddingBottom();if(height>0)messengerScreen.setLayoutParams(new LinearLayout.LayoutParams(-1,Math.max(dp(420),height)));}});messengerScreen.refresh();}else settings();
         pageScroll.scrollTo(0,0);
         reveal(content,true);
         refresh();
@@ -386,17 +401,18 @@ public class MainActivity extends Activity {
         hero.addView(new PeerArtwork(this,"network",ACCENT),new LinearLayout.LayoutParams(dp(76),dp(76)));
         LinearLayout summary=column();LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(0,-2,1);sp.setMarginStart(dp(12));hero.addView(summary,sp);
         LinearLayout statusRow=new LinearLayout(this);statusRow.setGravity(Gravity.CENTER_VERTICAL);homeDot=new View(this);homeDot.setBackground(dot(MUTED2));homeTone=-1;LinearLayout.LayoutParams led=new LinearLayout.LayoutParams(dp(8),dp(8));led.setMarginEnd(dp(8));statusRow.addView(homeDot,led);
-        status=label("",20,TEXT,true);statusRow.addView(status,new LinearLayout.LayoutParams(0,-2,1));summary.addView(statusRow);address=label("",14,MUTED,false);summary.addView(address);c.addView(hero);
+        status=label("",20,TEXT,true);status.setSingleLine(true);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setAutoSizeTextTypeUniformWithConfiguration(14,20,1,android.util.TypedValue.COMPLEX_UNIT_SP);statusRow.addView(status,new LinearLayout.LayoutParams(0,-2,1));summary.addView(statusRow);address=label("",14,MUTED,false);address.setSingleLine(true);address.setEllipsize(android.text.TextUtils.TruncateAt.END);summary.addView(address);c.addView(hero);
         status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         connectionProgress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);connectionProgress.setIndeterminate(true);connectionProgress.setIndeterminateTintList(ColorStateList.valueOf(ACCENT));connectionProgress.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);LinearLayout.LayoutParams progressParams=new LinearLayout.LayoutParams(-1,dp(4));progressParams.topMargin=dp(6);summary.addView(connectionProgress,progressParams);connectionProgress.setVisibility(View.GONE);
         LinearLayout actions=new LinearLayout(this);c.addView(actions);
         vpnButton=button(actions,s("choose_node"),false,()->{NodeController.Snapshot x=controller.snapshot();if(x.vpnConnected||isConnecting(x)){connectionRequested=false;controller.disconnect();refresh();}else if(connectionFailed(x)&&!connectionPeer.isEmpty())connect(connectionPeer);else showTab(1);});
         sharingButton=button(actions,getString(R.string.ui_share),true,()->{NodeController.Snapshot x=controller.snapshot();if(x.sharing)controller.stopSharing();else{requestNotifications();controller.startSharing();}refresh();});
-        for(int i=0;i<2;i++){LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(0,-2,1);bp.topMargin=dp(4);if(i==0)bp.setMarginEnd(dp(8));actions.getChildAt(i).setLayoutParams(bp);}
+        vpnButton.setAutoSizeTextTypeUniformWithConfiguration(11,14,1,android.util.TypedValue.COMPLEX_UNIT_SP);sharingButton.setAutoSizeTextTypeUniformWithConfiguration(11,14,1,android.util.TypedValue.COMPLEX_UNIT_SP);
+        for(int i=0;i<2;i++){LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(0,dp(50),1);bp.topMargin=dp(4);bp.gravity=Gravity.CENTER_VERTICAL;if(i==0)bp.setMarginEnd(dp(8));actions.getChildAt(i).setLayoutParams(bp);}
         LinearLayout stats=card();stats.setOrientation(LinearLayout.HORIZONTAL);
         receivedValue=statCell(stats,getString(R.string.ui_received));shareValue=statCell(stats,getString(R.string.ui_sent));clientsValue=statCell(stats,getString(R.string.ui_connected_label));
         LinearLayout map=card();LinearLayout mh=new LinearLayout(this);mh.setGravity(Gravity.CENTER_VERTICAL);mh.addView(label(getString(R.string.ui_world_nodes),16,NAVY,true),new LinearLayout.LayoutParams(0,-2,1));mh.addView(new PeerArtwork(this,"chevron",MUTED),new LinearLayout.LayoutParams(dp(18),dp(18)));map.addView(mh);
-        networkMap=new NetworkMapView(this);map.addView(networkMap,new LinearLayout.LayoutParams(-1,dp(175)));networkMap.setOnRegionSelectedListener(region->{selectedRegion=region;showTab(1);});
+        networkMap=new NetworkMapView(this);map.addView(networkMap,new LinearLayout.LayoutParams(-1,dp(175)));bindMapAspect(networkMap);networkMap.setOnRegionSelectedListener(region->{selectedRegion=region;showTab(1);});
         button(map,getString(R.string.ui_open_map),false,()->showTab(1));
         LinearLayout trafficCard=card();button(trafficCard,getString(R.string.ui_traffic),false,()->showTab(2));
         LinearLayout apps=card();LinearLayout ah=new LinearLayout(this);ah.setGravity(Gravity.CENTER_VERTICAL);ah.addView(label(getString(R.string.ui_apps),16,NAVY,true),new LinearLayout.LayoutParams(0,-2,1));ah.addView(new PeerArtwork(this,"chevron",MUTED),new LinearLayout.LayoutParams(dp(20),dp(20)));apps.addView(ah);apps.setOnClickListener(v->chooseApps());apps.setFocusable(true);apps.setContentDescription(getString(R.string.ui_choose_apps));
@@ -412,19 +428,20 @@ public class MainActivity extends Activity {
     }
     private void nodes() {
         if(searchStarted==0)searchStarted=SystemClock.elapsedRealtime();
-        mapCount=label("",13,MUTED2,false);mapCount.setPadding(dp(16),dp(2),0,0);content.addView(mapCount);
-        networkMap=new NetworkMapView(this);content.addView(networkMap,new LinearLayout.LayoutParams(-1,dp(265)));
+        mapCount=label("",13,MUTED2,false);mapCount.setSingleLine(true);mapCount.setEllipsize(android.text.TextUtils.TruncateAt.END);mapCount.setPadding(dp(16),dp(2),0,0);content.addView(mapCount);
+        LinearLayout mapCard=card();mapCard.setPadding(dp(10),dp(10),dp(10),dp(10));
+        networkMap=new NetworkMapView(this);mapCard.addView(networkMap,new LinearLayout.LayoutParams(-1,dp(175)));bindMapAspect(networkMap);
         networkMap.setOnRegionSelectedListener(region->{selectedRegion=region;showTab(1);});
         HorizontalScrollView filter=new HorizontalScrollView(this);filterStrip=filter;filter.setHorizontalScrollBarEnabled(false);regionChips=new LinearLayout(this);filter.addView(regionChips);content.addView(filter);
         int[] names={R.string.discovery_all,R.string.discovery_africa,R.string.discovery_americas,R.string.discovery_asia,R.string.discovery_europe,R.string.discovery_oceania,R.string.discovery_unknown};
         selectedRegion=Math.max(0,Math.min(selectedRegion,names.length-1));
         int[] order={0,4,3,2,1,5,6};for(int i:order){final int region=i;Button chip=button(regionChips,i==0?getString(R.string.ui_filter_all):getString(names[i]),false,()->{selectedRegion=region;showTab(1);});applyChip(chip,i==selectedRegion);LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(dp(106),dp(42));cp.setMarginEnd(dp(8));cp.bottomMargin=dp(12);chip.setLayoutParams(cp);chip.setSelected(i==selectedRegion);if(i==selectedRegion)filter.post(()->filter.smoothScrollTo(Math.max(0,chip.getLeft()-dp(8)),0));}
         LinearLayout search=column();searchPanel=search;search.setGravity(Gravity.CENTER_HORIZONTAL);search.setPadding(dp(16),dp(20),dp(16),dp(18));search.setBackground(glassCard(28));LinearLayout.LayoutParams searchParams=new LinearLayout.LayoutParams(-1,-2);searchParams.bottomMargin=dp(14);content.addView(search,searchParams);
-        FrameLayout symbol=new FrameLayout(this);search.addView(symbol,new LinearLayout.LayoutParams(dp(110),dp(110)));
-        searchArtwork=new PeerArtwork(this,"search",MUTED2);symbol.addView(searchArtwork,new FrameLayout.LayoutParams(-1,-1));
-        searchProgress=new ProgressBar(this);searchProgress.setIndeterminateTintList(ColorStateList.valueOf(ACCENT));symbol.addView(searchProgress,new FrameLayout.LayoutParams(dp(84),dp(84),Gravity.CENTER));
-        searchTitle=label("",22,TEXT,true);searchTitle.setGravity(Gravity.CENTER);search.addView(searchTitle,new LinearLayout.LayoutParams(-1,-2));
-        searchHint=label("",14,MUTED2,false);searchHint.setGravity(Gravity.CENTER);search.addView(searchHint,new LinearLayout.LayoutParams(-1,-2));
+        FrameLayout symbol=new FrameLayout(this);symbol.setBackground(rounded(withAlpha(ACCENT,0x12),17,withAlpha(ACCENT,0x3D)));symbol.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);search.addView(symbol,new LinearLayout.LayoutParams(dp(56),dp(56)));
+        searchArtwork=new PeerArtwork(this,"search",MUTED2);symbol.addView(searchArtwork,new FrameLayout.LayoutParams(dp(28),dp(28),Gravity.CENTER));
+        searchProgress=new ProgressBar(this);searchProgress.setIndeterminateTintList(ColorStateList.valueOf(ACCENT));symbol.addView(searchProgress,new FrameLayout.LayoutParams(dp(32),dp(32),Gravity.CENTER));
+        searchTitle=label("",22,TEXT,true);searchTitle.setGravity(Gravity.CENTER);searchTitle.setMaxLines(2);searchTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);search.addView(searchTitle,new LinearLayout.LayoutParams(-1,-2));
+        searchHint=label("",14,MUTED2,false);searchHint.setGravity(Gravity.CENTER);searchHint.setMaxLines(3);searchHint.setEllipsize(android.text.TextUtils.TruncateAt.END);search.addView(searchHint,new LinearLayout.LayoutParams(-1,-2));
         searchAction=button(search,getString(R.string.ui_retry),true,this::searchAction);
         allRegions=button(search,getString(R.string.ui_all_regions),false,()->{selectedRegion=PeerRegions.ALL;showTab(1);});
         searchDetails=button(search,getString(R.string.ui_more),false,()->{advanced=true;showTab(3);});searchDetails.setBackground(null);searchDetails.setElevation(0);searchDetails.setTextColor(ACCENT);
@@ -612,15 +629,15 @@ public class MainActivity extends Activity {
             LinearLayout c=column();c.setBackground(glassCard(20));c.setElevation(dp(4));c.setPadding(dp(14),dp(12),dp(14),dp(12));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(10);peers.addView(c,lp);
             LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);c.addView(row);
             TextView flag=label(flag(p.country),28,TEXT,false);row.addView(flag,new LinearLayout.LayoutParams(dp(46),dp(48)));
-            LinearLayout info=column();LinearLayout.LayoutParams ip=new LinearLayout.LayoutParams(0,-2,1);ip.setMarginEnd(dp(8));row.addView(info,ip);info.addView(label(country(p.country),16,TEXT,true));
+            LinearLayout info=column();LinearLayout.LayoutParams ip=new LinearLayout.LayoutParams(0,-2,1);ip.setMarginEnd(dp(8));row.addView(info,ip);TextView countryLabel=label(country(p.country),16,TEXT,true);countryLabel.setSingleLine(true);countryLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);info.addView(countryLabel);
             boolean announced=p.autoDiscovered&&p.announced;
             int slots=p.reachable?Math.max(0,3-p.clients):Math.max(0,Math.min(3,p.freeSlots));
-            info.addView(label(getString(R.string.ui_slots,slots),12,MUTED2,false));
+            TextView slotsLabel=label(getString(R.string.ui_slots,slots),12,MUTED2,false);slotsLabel.setSingleLine(true);slotsLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);info.addView(slotsLabel);
             String state=getString(p.reachable?R.string.ui_verified:R.string.ui_announced);
             boolean canConnect=SearchPresentation.canConnect(p.reachable,p.paired,announced,slots);
             boolean large=getResources().getConfiguration().fontScale>1.6f;
             Button connect=button(large?c:row,getString(canConnect?R.string.ui_connect:R.string.ui_full),true,()->connect(p.id));if(!large){connect.setLayoutParams(new LinearLayout.LayoutParams(dp(124),dp(54)));connect.setMaxLines(1);connect.setAutoSizeTextTypeUniformWithConfiguration(10,14,1,android.util.TypedValue.COMPLEX_UNIT_SP);}connect.setEnabled(canConnect&&x.sharing&&!x.busy);
-            TextView meta=label(state,11,p.reachable?MINT:MUTED2,false);c.addView(meta);c.setContentDescription(country(p.country)+", "+state+", "+getString(R.string.ui_slots,slots));
+            TextView meta=label(state,11,p.reachable?MINT:MUTED2,false);meta.setSingleLine(true);meta.setEllipsize(android.text.TextUtils.TruncateAt.END);c.addView(meta);c.setContentDescription(country(p.country)+", "+state+", "+getString(R.string.ui_slots,slots));
         }
     }
     private static boolean connectionFailed(NodeController.Snapshot x){return !x.connecting&&!x.vpnConnected&&("ERROR".equals(x.status)||"UNREACHABLE".equals(x.status)||"CAPACITY".equals(x.status));}
