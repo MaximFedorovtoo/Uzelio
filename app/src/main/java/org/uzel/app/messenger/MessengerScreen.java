@@ -21,6 +21,7 @@ import org.uzel.app.R;
 import org.uzel.messenger.chat.ChatService;
 import org.uzel.messenger.chat.ChatInvite;
 import org.uzel.messenger.chat.ChatRepository;
+import org.uzel.messenger.chat.ChatWire;
 import org.uzel.messenger.chat.LocalAddress;
 import java.io.*;
 import java.util.*;
@@ -39,8 +40,19 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
     private final TextView status,heading,activeAvatar;
     private final Button invitationButton;
     private final Button send,retry,attach,voice;
+    private final Button callButton,callAccept,callReject,callEnd;
+    private final TextView callState;
+    private final LinearLayout callPanel,callActions;
+    private final AndroidMessenger.CallHandler callHandler=this::onCallFrame;
+    private CallSession call;
+    private boolean pendingCallAccept;
+    private String pendingCallContact="";
     public static final int REQUEST_FILE=73;
     public static final int REQUEST_AUDIO=74;
+    public static final int REQUEST_CALL_AUDIO=75;
+    private final Runnable hideFailedCall=()->{
+        if(call!=null&&call.state()==CallSession.State.FAILED){call.close();call=null;renderCall();updateComposer();}
+    };
     private static final int MAX_FILE=8_388_608;
     private static final int VOICE_LIMIT_MS=120_000;
     private MediaRecorder recorder;
@@ -61,21 +73,27 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
         listTools=column();LinearLayout actions=row();TextView sectionTitle=text(R.string.chat_title,24,TEXT);actions.addView(sectionTitle,new LayoutParams(0,-2,1));Button add=button(R.string.chat_add,()->addContact()),invite=button(R.string.chat_invite,()->invitation());add.setText("+");add.setContentDescription(getResources().getString(R.string.chat_add));actions.addView(add,new LayoutParams(dp(48),dp(48)));listTools.addView(actions);invitationButton=invite;
         status=text(R.string.chat_loading,13,MUTED);status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);addView(status);retry=button(R.string.chat_retry,()->{if(service==null){AndroidMessenger.chats(activity);refresh();}else work(()->service.retryNow());});addView(retry);retry.setVisibility(GONE);
         list=column();search=input(R.string.chat_search);search.setSingleLine(true);listTools.addView(search);list.addView(listTools);contactScroll=new ScrollView(activity);contactScroll.setFillViewport(true);contactScroll.addView(list);addView(contactScroll,new LayoutParams(-1,0,1));
-        thread=column();LinearLayout title=row();Button back=button(R.string.chat_back,()->backToContacts());back.setText("‹");back.setTextSize(26);back.setContentDescription(getResources().getString(R.string.chat_back));title.addView(back,new LayoutParams(dp(48),dp(48)));activeAvatar=new TextView(activity);activeAvatar.setTextColor(TEXT);activeAvatar.setTextSize(16);activeAvatar.setGravity(Gravity.CENTER);activeAvatar.setTypeface(null,Typeface.BOLD);activeAvatar.setBackground(surface(0xff247675));LayoutParams avatarSize=new LayoutParams(dp(36),dp(36));avatarSize.setMarginEnd(dp(8));title.addView(activeAvatar,avatarSize);heading=text(R.string.chat_select,18,TEXT);title.addView(heading,new LayoutParams(0,-2,1));thread.addView(title);thread.addView(text(R.string.chat_private,12,MUTED));messages=column();ScrollView history=new ScrollView(activity);history.setFillViewport(true);history.addView(messages);thread.addView(history,new LayoutParams(-1,0,1));
+        thread=column();LinearLayout title=row();Button back=button(R.string.chat_back,()->backToContacts());back.setText("‹");back.setTextSize(26);back.setContentDescription(getResources().getString(R.string.chat_back));title.addView(back,new LayoutParams(dp(48),dp(48)));activeAvatar=new TextView(activity);activeAvatar.setTextColor(TEXT);activeAvatar.setTextSize(16);activeAvatar.setGravity(Gravity.CENTER);activeAvatar.setTypeface(null,Typeface.BOLD);activeAvatar.setBackground(surface(0xff247675));LayoutParams avatarSize=new LayoutParams(dp(36),dp(36));avatarSize.setMarginEnd(dp(8));title.addView(activeAvatar,avatarSize);heading=text(R.string.chat_select,18,TEXT);title.addView(heading,new LayoutParams(0,-2,1));callButton=button("Позвонить",this::startCall);callButton.setTextSize(12);callButton.setPadding(dp(8),0,dp(8),0);LayoutParams callButtonParams=new LayoutParams(-2,dp(48));callButtonParams.setMarginStart(dp(4));title.addView(callButton,callButtonParams);thread.addView(title);thread.addView(text(R.string.chat_private,12,MUTED));
+        callPanel=column();callPanel.setPadding(dp(12),dp(6),dp(12),dp(8));callPanel.setBackground(surface(0xff123b47));callPanel.setVisibility(GONE);
+        callState=text(R.string.chat_private,14,TEXT);callState.setText("");callActions=row();
+        callAccept=button("Принять",this::acceptCall);callReject=button("Отклонить",this::rejectCall);callEnd=button("Завершить",this::endCall);
+        callActions.addView(callAccept,callActionParams());callActions.addView(callReject,callActionParams());callActions.addView(callEnd,callActionParams());
+        callPanel.addView(callState);callPanel.addView(callActions);thread.addView(callPanel,new LayoutParams(-1,-2));
+        messages=column();ScrollView history=new ScrollView(activity);history.setFillViewport(true);history.addView(messages);thread.addView(history,new LayoutParams(-1,0,1));
         LinearLayout composer=row();draft=input(R.string.chat_message);draft.setMinLines(1);draft.setMaxLines(4);composer.addView(draft,new LayoutParams(0,-2,1));
         attach=button(R.string.chat_attach,this::pickFile);attach.setText("📎");attach.setTextSize(18);attach.setContentDescription(getResources().getString(R.string.chat_attach));
         LayoutParams attachParams=new LayoutParams(dp(44),dp(44));attachParams.setMarginStart(dp(4));composer.addView(attach,attachParams);
         voice=button(R.string.chat_voice_record,this::toggleVoice);voice.setText("🎤");voice.setTextSize(18);voice.setContentDescription(getResources().getString(R.string.chat_voice_record));
         LayoutParams voiceParams=new LayoutParams(dp(44),dp(44));voiceParams.setMarginStart(dp(4));composer.addView(voice,voiceParams);
         send=button(R.string.chat_send,()->send());send.setText("➤");send.setContentDescription(getResources().getString(R.string.chat_send));GradientDrawable primary=new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{0xff58f3e9,0xff1cc7d2});primary.setCornerRadius(dp(12));send.setBackground(primary);send.setTextColor(BG);composer.addView(send,new LayoutParams(dp(48),dp(48)));thread.addView(composer);thread.addView(text(R.string.chat_waiting,12,MUTED));addView(thread,new LayoutParams(-1,0,1));
-        draft.addTextChangedListener(watch(()->{drafts.put(selected,draft.getText().toString());send.setEnabled(service!=null&&!selected.isEmpty()&&!draft.getText().toString().trim().isEmpty());}));search.addTextChangedListener(watch(this::renderContacts));draft.setText(drafts.getOrDefault(selected,""));send.setEnabled(false);showConversation();renderContacts();
+        draft.addTextChangedListener(watch(()->{drafts.put(selected,draft.getText().toString());send.setEnabled(service!=null&&!selected.isEmpty()&&!draft.getText().toString().trim().isEmpty());}));search.addTextChangedListener(watch(this::renderContacts));draft.setText(drafts.getOrDefault(selected,""));send.setEnabled(false);showConversation();renderContacts();AndroidMessenger.setCallHandler(callHandler);renderCall();
     }
-    public boolean backToContacts(){if(selected.isEmpty())return false;if(recorder!=null)finishRecording(false);stopPlayback();drafts.put(selected,draft.getText().toString());selected="";showConversation();return true;}
+    public boolean backToContacts(){if(selected.isEmpty())return false;if(call!=null)endCall();if(recorder!=null)finishRecording(false);stopPlayback();drafts.put(selected,draft.getText().toString());selected="";showConversation();return true;}
     public void saveState(Bundle out){drafts.put(selected,draft.getText().toString());out.putString("chat.selected",selected);Bundle all=new Bundle();for(var entry:drafts.entrySet())all.putString(entry.getKey(),entry.getValue());out.putBundle("chat.drafts",all);}
     private TextWatcher watch(Runnable r){return new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int c,int f){}public void onTextChanged(CharSequence s,int a,int b,int c){r.run();}public void afterTextChanged(Editable e){}};}
     private void showConversation(){boolean open=!selected.isEmpty();contactScroll.setVisibility(open?GONE:VISIBLE);thread.setVisibility(open?VISIBLE:GONE);if(open)draft.setText(drafts.getOrDefault(selected,""));updateComposer();}
     public void refresh(){if(closed||pending)return;pending=true;String id=selected;submit(()->{try{if(service==null)service=AndroidMessenger.chats(activity).get();var next=service.contacts();var history=id.isEmpty()?java.util.List.<ChatRepository.Message>of():service.history(id);postUi(()->{if(closed)return;pending=false;contacts=next;for(var c:contacts)if(c.id().equals(selected)){heading.setText(c.name());activeAvatar.setText(initials(c.name()));}if(recorder==null)status.setVisibility(GONE);retry.setVisibility(GONE);renderContacts();if(selected.equals(id))renderHistory(history);send.setEnabled(!selected.isEmpty()&&!draft.getText().toString().trim().isEmpty());updateComposer();});}catch(Exception e){postUi(()->{pending=false;status.setVisibility(VISIBLE);status.setText(R.string.chat_error);retry.setVisibility(VISIBLE);});}});}
-    private void renderContacts(){while(list.getChildCount()>1)list.removeViewAt(1);String q=search.getText().toString().trim().toLowerCase(Locale.ROOT);int count=0;for(var c:contacts){if(!c.name().toLowerCase(Locale.ROOT).contains(q))continue;count++;LinearLayout item=row();item.setPadding(dp(10),dp(14),dp(10),dp(14));item.setBackground(surface(SURFACE));item.setElevation(dp(2));TextView avatar=new TextView(activity);avatar.setText(initials(c.name()));avatar.setTextColor(TEXT);avatar.setTextSize(16);avatar.setTypeface(null,Typeface.BOLD);avatar.setGravity(Gravity.CENTER);avatar.setBackground(surface(0xff247675));item.addView(avatar,new LayoutParams(dp(46),dp(46)));LinearLayout copy=column();copy.setPadding(dp(12),0,0,0);TextView name=new TextView(activity);name.setText(c.name());name.setTextColor(TEXT);name.setTextSize(14);name.setTypeface(null,Typeface.BOLD);copy.addView(name);copy.addView(text(R.string.chat_personal,12,MUTED));item.addView(copy,new LayoutParams(0,-2,1));item.setContentDescription(c.name());item.setFocusable(true);item.setOnClickListener(v->{selected=c.id();heading.setText(c.name());activeAvatar.setText(initials(c.name()));signature="";showConversation();refresh();});LayoutParams lp=new LayoutParams(-1,-2);lp.topMargin=dp(8);list.addView(item,lp);}if(count==0)list.addView(text(q.isEmpty()?R.string.chat_empty:R.string.chat_not_found,16,MUTED));View spacer=new View(activity);list.addView(spacer,new LayoutParams(-1,0,1));TextView footer=text(R.string.chat_storage,12,MUTED);footer.setPadding(dp(14),dp(18),dp(14),dp(14));footer.setBackground(surface(SURFACE));LayoutParams lp=new LayoutParams(-1,-2);lp.topMargin=dp(18);list.addView(footer,lp);list.addView(invitationButton,new LayoutParams(-1,-2));}
+    private void renderContacts(){while(list.getChildCount()>1)list.removeViewAt(1);String q=search.getText().toString().trim().toLowerCase(Locale.ROOT);int count=0;for(var c:contacts){if(!c.name().toLowerCase(Locale.ROOT).contains(q))continue;count++;LinearLayout item=row();item.setPadding(dp(10),dp(14),dp(10),dp(14));item.setBackground(surface(SURFACE));item.setElevation(dp(2));TextView avatar=new TextView(activity);avatar.setText(initials(c.name()));avatar.setTextColor(TEXT);avatar.setTextSize(16);avatar.setTypeface(null,Typeface.BOLD);avatar.setGravity(Gravity.CENTER);avatar.setBackground(surface(0xff247675));item.addView(avatar,new LayoutParams(dp(46),dp(46)));LinearLayout copy=column();copy.setPadding(dp(12),0,0,0);TextView name=new TextView(activity);name.setText(c.name());name.setTextColor(TEXT);name.setTextSize(14);name.setTypeface(null,Typeface.BOLD);copy.addView(name);copy.addView(text(R.string.chat_personal,12,MUTED));item.addView(copy,new LayoutParams(0,-2,1));item.setContentDescription(c.name());item.setFocusable(true);item.setOnClickListener(v->{if(call!=null&&!call.contactId().equals(c.id()))endCall();selected=c.id();heading.setText(c.name());activeAvatar.setText(initials(c.name()));signature="";showConversation();refresh();});LayoutParams lp=new LayoutParams(-1,-2);lp.topMargin=dp(8);list.addView(item,lp);}if(count==0)list.addView(text(q.isEmpty()?R.string.chat_empty:R.string.chat_not_found,16,MUTED));View spacer=new View(activity);list.addView(spacer,new LayoutParams(-1,0,1));TextView footer=text(R.string.chat_storage,12,MUTED);footer.setPadding(dp(14),dp(18),dp(14),dp(14));footer.setBackground(surface(SURFACE));LayoutParams lp=new LayoutParams(-1,-2);lp.topMargin=dp(18);list.addView(footer,lp);list.addView(invitationButton,new LayoutParams(-1,-2));}
     private static String initials(String name){StringBuilder b=new StringBuilder();for(String part:name.trim().split("\\s+")){if(!part.isEmpty())b.appendCodePoint(part.codePointAt(0));if(b.codePointCount(0,b.length())==2)break;}return b.toString().toUpperCase(Locale.ROOT);}
     private void renderHistory(java.util.List<ChatRepository.Message> history){
         String next=history.toString();if(signature.equals(next))return;signature=next;messages.removeAllViews();
@@ -102,7 +120,7 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
         }
     }
     private void send(){if(closed)return;String value=draft.getText().toString().trim(),id=selected;if(value.isEmpty()||service==null||id.isEmpty())return;send.setEnabled(false);submit(()->{try{service.send(id,value);postUi(()->{if(selected.equals(id)&&draft.getText().toString().trim().equals(value)){draft.setText("");drafts.put(id,"");}else if(drafts.getOrDefault(id,"").trim().equals(value))drafts.put(id,"");signature="";refresh();});}catch(Exception e){postUi(()->{status.setVisibility(VISIBLE);status.setText(R.string.chat_error);retry.setVisibility(VISIBLE);send.setEnabled(true);});}});}
-    private void updateComposer(){boolean ready=service!=null&&!selected.isEmpty();attach.setEnabled(ready&&recorder==null);voice.setEnabled(ready||recorder!=null);}
+    private void updateComposer(){boolean ready=service!=null&&!selected.isEmpty();boolean inCall=call!=null&&call.isActive();attach.setEnabled(ready&&recorder==null&&!inCall);voice.setEnabled((ready||recorder!=null)&&!inCall);callButton.setEnabled(service!=null&&!selected.isEmpty()&&recorder==null&&!inCall);}
     private void pickFile(){if(closed||recorder!=null||service==null||selected.isEmpty())return;attachmentContact=selected;Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("*/*");intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);try{activity.startActivityForResult(intent,REQUEST_FILE);}catch(Exception e){attachmentContact="";fail(R.string.chat_file_unreadable);}}
     public void onActivityResult(int request,int result,Intent data){if(request!=REQUEST_FILE)return;String contact=attachmentContact;attachmentContact="";if(result!=Activity.RESULT_OK||data==null||data.getData()==null||closed)return;String target=contact.isEmpty()?selected:contact;if(target.isEmpty())return;sendPicked(data.getData(),target);}
     private void sendPicked(Uri uri,String contact){
@@ -215,12 +233,25 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
     }
     private void toggleVoice(){
         if(closed)return;
+        if(call!=null&&call.isActive())return;
         if(recorder!=null){finishRecording(false);return;}
         if(service==null||selected.isEmpty())return;
         if(activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){activity.requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},REQUEST_AUDIO);return;}
         startRecording();
     }
     public void onRequestPermissionsResult(int request,String[] permissions,int[] grantResults){
+        if(request==REQUEST_CALL_AUDIO){
+            boolean granted=grantResults!=null&&grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED;
+            boolean accept=pendingCallAccept;pendingCallAccept=false;String contact=pendingCallContact;pendingCallContact="";
+            if(granted){
+                if(accept&&call!=null&&call.state()==CallSession.State.RINGING){call.accept();renderCall();updateComposer();}
+                else if(!contact.isEmpty())beginCall(contact);
+            }else{
+                if(call!=null&&call.state()==CallSession.State.RINGING)call.reject();
+                failText("Для звонка нужен доступ к микрофону.");
+            }
+            return;
+        }
         if(request!=REQUEST_AUDIO)return;
         if(grantResults!=null&&grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED)startRecording();
         else fail(R.string.chat_mic_denied);
@@ -274,6 +305,99 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
         });
         updateComposer();
     }
+    private void startCall(){
+        if(closed||service==null||selected.isEmpty())return;
+        if(call!=null&&call.isActive())return;
+        if(recorder!=null)finishRecording(false);
+        if(activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
+            pendingCallContact=selected;pendingCallAccept=false;
+            activity.requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},REQUEST_CALL_AUDIO);
+            return;
+        }
+        beginCall(selected);
+    }
+    private void beginCall(String contact){
+        if(closed||service==null||contact==null||contact.isEmpty())return;
+        if(call!=null){call.close();call=null;}
+        handler.removeCallbacks(hideFailedCall);
+        CallSession session=new CallSession(activity.getApplicationContext(),service,this::onCallState);
+        call=session;renderCall();updateComposer();
+        try{session.start(contact);}
+        catch(RuntimeException failure){session.close();call=null;renderCall();updateComposer();failText("Не удалось начать звонок.");}
+    }
+    private void acceptCall(){
+        CallSession session=call;
+        if(closed||session==null||session.state()!=CallSession.State.RINGING)return;
+        if(activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
+            pendingCallAccept=true;
+            activity.requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},REQUEST_CALL_AUDIO);
+            return;
+        }
+        session.accept();renderCall();updateComposer();
+    }
+    private void rejectCall(){CallSession session=call;if(session!=null)session.reject();}
+    private void endCall(){
+        CallSession session=call;
+        if(session==null)return;
+        if(session.state()==CallSession.State.FAILED){
+            handler.removeCallbacks(hideFailedCall);session.close();call=null;renderCall();updateComposer();return;
+        }
+        session.hangup();
+    }
+    private void onCallFrame(String contactId,int kind,String callId,String sdp){
+        postUi(()->{if(!closed)handleCallFrame(contactId,kind,callId,sdp);});
+    }
+    private void handleCallFrame(String contactId,int kind,String callId,String sdp){
+        if(kind==ChatWire.CALL_OFFER){incomingOffer(contactId,callId,sdp);return;}
+        CallSession session=call;
+        if(session==null||!session.contactId().equals(contactId))return;
+        if(kind==ChatWire.CALL_ANSWER)session.answer(callId,sdp);
+        else if(kind==ChatWire.CALL_END)session.end(callId);
+    }
+    private void incomingOffer(String contactId,String callId,String sdp){
+        if(service==null)return;
+        CallSession current=call;
+        if(current!=null&&current.isActive()){rejectBusy(contactId,callId);return;}
+        if(current!=null){current.close();call=null;}
+        handler.removeCallbacks(hideFailedCall);
+        if(recorder!=null)finishRecording(false);
+        selected=contactId;String name=contactName(contactId);heading.setText(name);activeAvatar.setText(initials(name));signature="";showConversation();refresh();
+        CallSession session=new CallSession(activity.getApplicationContext(),service,this::onCallState);
+        call=session;renderCall();updateComposer();
+        try{session.incoming(contactId,callId,sdp);}
+        catch(RuntimeException failure){session.close();call=null;renderCall();updateComposer();}
+    }
+    private String contactName(String id){for(var c:contacts)if(c.id().equals(id))return c.name();return "Uzelio";}
+    private void rejectBusy(String contactId,String callId){
+        submit(()->{try{if(service==null)service=AndroidMessenger.chats(activity).get();service.sendCall(contactId,ChatWire.CALL_END,callId,"");}catch(Exception ignored){/* The caller times out. */}});
+    }
+    private void onCallState(CallSession session,CallSession.State state){
+        if(closed||session!=call)return;
+        handler.removeCallbacks(hideFailedCall);
+        if(state==CallSession.State.ENDED)call=null;
+        renderCall();updateComposer();
+        if(state==CallSession.State.FAILED)handler.postDelayed(hideFailedCall,6000);
+    }
+    private void renderCall(){
+        CallSession session=call;
+        if(session==null||session.state()==CallSession.State.ENDED){
+            callPanel.setVisibility(GONE);callAccept.setVisibility(GONE);callReject.setVisibility(GONE);callEnd.setVisibility(GONE);return;
+        }
+        CallSession.State state=session.state();
+        callPanel.setVisibility(VISIBLE);callAccept.setVisibility(GONE);callReject.setVisibility(GONE);callEnd.setVisibility(GONE);
+        if(state==CallSession.State.CALLING){
+            callState.setText("Звоним…");callEnd.setText("Завершить");callEnd.setVisibility(VISIBLE);
+        }else if(state==CallSession.State.RINGING){
+            if(session.isAccepted()){callState.setText("Соединение…");callEnd.setText("Завершить");callEnd.setVisibility(VISIBLE);}
+            else{callState.setText("Входящий звонок");callAccept.setVisibility(VISIBLE);callReject.setVisibility(VISIBLE);}
+        }else if(state==CallSession.State.CONNECTED){
+            callState.setText("В сети");callEnd.setText("Завершить");callEnd.setVisibility(VISIBLE);
+        }else if(state==CallSession.State.FAILED){
+            callState.setText("Не удалось");callEnd.setText("Скрыть");callEnd.setVisibility(VISIBLE);
+        }else callPanel.setVisibility(GONE);
+    }
+    private LayoutParams callActionParams(){LayoutParams params=new LayoutParams(-2,dp(44));params.setMarginEnd(dp(8));return params;}
+    private void failText(String message){if(closed)return;status.setVisibility(VISIBLE);status.setText(message);Toast.makeText(activity,message,Toast.LENGTH_LONG).show();}
     private void fail(int message){if(closed)return;status.setVisibility(VISIBLE);status.setText(message);Toast.makeText(activity,message,Toast.LENGTH_LONG).show();}
     private static final class AttachmentTooLarge extends Exception{}
     private void addContact(){LinearLayout form=column();form.setPadding(dp(20),dp(10),dp(20),dp(10));EditText code=input(R.string.chat_code),name=input(R.string.chat_name);code.setMinLines(2);code.setMaxLines(3);name.setSingleLine(true);form.addView(code);form.addView(name);form.addView(text(R.string.chat_verify_notice,14,MUTED));AlertDialog d=new AlertDialog.Builder(activity).setTitle(R.string.chat_add).setView(form).setNegativeButton(R.string.chat_cancel,null).setPositiveButton(R.string.chat_add,null).create();d.setOnShowListener(v->d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(w->{String c=code.getText().toString().trim(),n=name.getText().toString().trim();if(c.isEmpty()||n.isEmpty()){name.setError(getResources().getString(R.string.chat_name));return;}work(()->{String safety=ChatInvite.decode(c).safetyCode();postUi(()->new AlertDialog.Builder(activity).setTitle(R.string.chat_verify_title).setMessage(getResources().getString(R.string.chat_safety,safety)+"\n\n"+getResources().getString(R.string.chat_verify_notice)).setNegativeButton(R.string.chat_cancel,null).setPositiveButton(R.string.chat_match,(a,b)->work(()->{service.addContact(c,n);postUi(d::dismiss);})).show());});}));d.show();}
@@ -287,8 +411,9 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
     private LinearLayout row(){LinearLayout v=new LinearLayout(activity);v.setGravity(Gravity.CENTER_VERTICAL);return v;}
     private TextView text(int id,int size,int color){TextView v=new TextView(activity);v.setText(id);v.setTextSize(size);v.setTextColor(color);v.setPadding(0,dp(6),0,dp(6));return v;}
     private EditText input(int hint){EditText v=new EditText(activity);v.setTextColor(TEXT);v.setHintTextColor(MUTED);v.setHint(hint);v.setTextSize(16);v.setPadding(dp(12),dp(8),dp(12),dp(8));v.setBackground(surface(SURFACE));v.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);return v;}
-    private Button button(int title,Runnable action){Button b=new Button(activity){@Override public void setEnabled(boolean enabled){super.setEnabled(enabled);setAlpha(enabled?1f:.5f);}};b.setText(title);styleButton(b);b.setOnClickListener(v->action.run());return b;}
+    private Button button(int title,Runnable action){return button(getResources().getString(title),action);}
+    private Button button(String title,Runnable action){Button b=new Button(activity){@Override public void setEnabled(boolean enabled){super.setEnabled(enabled);setAlpha(enabled?1f:.5f);}};b.setText(title);styleButton(b);b.setOnClickListener(v->action.run());return b;}
     private void styleButton(Button b){b.setTextColor(CYAN);b.setTextSize(13);b.setAllCaps(false);b.setMinHeight(dp(48));b.setBackground(surface(SURFACE));b.setElevation(dp(2));}
     private GradientDrawable surface(int color){GradientDrawable d=new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{color,color==SURFACE?0xff19374e:color});d.setCornerRadius(dp(16));d.setStroke(dp(1),0xff36546c);return d;}
-    @Override public void close(){closed=true;handler.removeCallbacks(voiceWatchdog);MediaRecorder current=recorder;recorder=null;if(current!=null){try{current.stop();}catch(RuntimeException ignored){}try{current.release();}catch(RuntimeException ignored){}}voiceContact="";attachmentContact="";if(voiceFile!=null){voiceFile.delete();voiceFile=null;}stopPlayback();handler.removeCallbacksAndMessages(null);worker.shutdownNow();}
+    @Override public void close(){closed=true;AndroidMessenger.clearCallHandler(callHandler);handler.removeCallbacks(hideFailedCall);CallSession active=call;call=null;if(active!=null)active.close();handler.removeCallbacks(voiceWatchdog);MediaRecorder current=recorder;recorder=null;if(current!=null){try{current.stop();}catch(RuntimeException ignored){}try{current.release();}catch(RuntimeException ignored){}}voiceContact="";attachmentContact="";if(voiceFile!=null){voiceFile.delete();voiceFile=null;}stopPlayback();handler.removeCallbacksAndMessages(null);worker.shutdownNow();}
 }

@@ -15,6 +15,7 @@ import java.util.concurrent.*;
 import org.uzel.messenger.chat.ChatService;
 import org.uzel.messenger.chat.ChatInvite;
 import org.uzel.messenger.chat.ChatRepository;
+import org.uzel.messenger.chat.ChatWire;
 import org.uzel.messenger.chat.LocalAddress;
 
 /** Native controls; the composer is never replaced by the periodic history refresh. */
@@ -31,13 +32,27 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
     private final JLabel status=new JLabel("Добавьте контакт по приглашению"),heading=new JLabel("Выберите контакт для переписки");
     private final JButton send=button("Отправить"),retry=button("Повторить подключение"),back=button("‹"),attach=button("📎"),mic=button("🎤");
     private final JLabel activeAvatar=new AvatarLabel("");
+    private final JButton call=smallButton("Позвонить");
+    private final JPanel callPanel=column(),callActions=new JPanel(new FlowLayout(FlowLayout.LEFT,8,6));
+    private final JLabel callTitle=new JLabel();
+    private final JButton acceptCall=smallButton("Принять"),rejectCall=smallButton("Отклонить"),hangup=smallButton("Завершить"),dismissCall=smallButton("Скрыть");
+    private final CallSession.Listener callListener=new CallSession.Listener(){
+        public void state(CallSession source,CallSession.State state,String contactId,String name){
+            SwingUtilities.invokeLater(()->{if(!closed&&source==callSession)renderCall(state,contactId,name);});
+        }
+        public void error(CallSession source,String message){
+            SwingUtilities.invokeLater(()->{if(!closed&&source==callSession&&message!=null&&!message.isBlank())status.setText(message);});
+        }
+    };
+    private CallSession callSession;
+    private String callContact="",callName="",callCallId="",callOffer="";
     private volatile VoiceRecorder recorder;
     private volatile String playbackId="";
     private volatile Clip playbackClip;
     private final Map<String,String> drafts=new HashMap<>();
     private java.util.List<ChatRepository.Contact> cached=java.util.List.of();
     private String selected="",signature="";
-    private ChatService service;
+    private volatile ChatService service;
     private boolean pending;
     private volatile boolean closed;
     public MessengerPanel(Path root){
@@ -51,7 +66,16 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
         JPanel list=sidebar;
         JPanel center=new JPanel(null){public void doLayout(){int w=getWidth(),h=getHeight();boolean wide=w>700;back.setVisible(!wide);list.setVisible(wide||selected.isEmpty());conversation.setVisible(wide||!selected.isEmpty());if(wide){list.setBounds(0,0,320,h);conversation.setBounds(320,0,Math.max(0,w-320),h);}else{list.setBounds(0,0,w,h);conversation.setBounds(0,0,w,h);}}};center.setOpaque(false);center.add(list);center.add(conversation);add(center,BorderLayout.CENTER);
         conversation.setBackground(BG);conversation.setBorder(new EmptyBorder(16,24,14,24));
-        JPanel title=column();JPanel head=new JPanel(new BorderLayout(10,0));head.setOpaque(false);back.setToolTipText("Назад к чатам");back.addActionListener(e->{drafts.put(selected,draft.getText());selected="";revalidate();repaint();});head.add(back,BorderLayout.WEST);heading.setForeground(TEXT);heading.setFont(new Font("Segoe UI",Font.BOLD,17));JPanel person=new JPanel(new BorderLayout(12,0));person.setOpaque(false);activeAvatar.setPreferredSize(new Dimension(42,42));person.add(activeAvatar,BorderLayout.WEST);person.add(heading,BorderLayout.CENTER);head.add(person,BorderLayout.CENTER);title.add(head);JLabel route=new JLabel("Личная переписка · сквозное шифрование",SwingConstants.CENTER);route.setForeground(MUTED);route.setFont(new Font("Segoe UI",Font.PLAIN,11));route.setBorder(new EmptyBorder(14,0,14,0));title.add(route);conversation.add(title,BorderLayout.NORTH);messages.setBorder(new EmptyBorder(8,8,12,8));conversation.add(scroll(messages),BorderLayout.CENTER);
+        JPanel title=column();JPanel head=new JPanel(new BorderLayout(10,0));head.setOpaque(false);back.setToolTipText("Назад к чатам");back.addActionListener(e->{drafts.put(selected,draft.getText());selected="";updateCallButton();revalidate();repaint();});head.add(back,BorderLayout.WEST);heading.setForeground(TEXT);heading.setFont(new Font("Segoe UI",Font.BOLD,17));JPanel person=new JPanel(new BorderLayout(12,0));person.setOpaque(false);activeAvatar.setPreferredSize(new Dimension(42,42));person.add(activeAvatar,BorderLayout.WEST);person.add(heading,BorderLayout.CENTER);head.add(person,BorderLayout.CENTER);
+        call.setEnabled(false);call.setToolTipText("Позвонить контакту");call.getAccessibleContext().setAccessibleName("Позвонить контакту");call.addActionListener(e->startCall());head.add(call,BorderLayout.EAST);title.add(head);
+        JLabel route=new JLabel("Личная переписка · сквозное шифрование",SwingConstants.CENTER);route.setForeground(MUTED);route.setFont(new Font("Segoe UI",Font.PLAIN,11));route.setBorder(new EmptyBorder(14,0,14,0));title.add(route);
+        callTitle.setForeground(TEXT);callTitle.setFont(new Font("Segoe UI",Font.PLAIN,12));callPanel.setOpaque(false);callPanel.setBorder(new EmptyBorder(0,0,10,0));callPanel.setVisible(false);callPanel.add(callTitle);callActions.setOpaque(false);
+        acceptCall.setToolTipText("Принять звонок");acceptCall.getAccessibleContext().setAccessibleName("Принять звонок");acceptCall.addActionListener(e->acceptIncoming());
+        rejectCall.setToolTipText("Отклонить звонок");rejectCall.getAccessibleContext().setAccessibleName("Отклонить звонок");rejectCall.addActionListener(e->rejectIncoming());
+        hangup.setToolTipText("Завершить звонок");hangup.getAccessibleContext().setAccessibleName("Завершить звонок");hangup.addActionListener(e->hangupCall());
+        dismissCall.setToolTipText("Скрыть сообщение о звонке");dismissCall.getAccessibleContext().setAccessibleName("Скрыть сообщение о звонке");dismissCall.addActionListener(e->dismissCallPanel());
+        callActions.add(acceptCall);callActions.add(rejectCall);callActions.add(hangup);callActions.add(dismissCall);callPanel.add(callActions);title.add(callPanel);
+        conversation.add(title,BorderLayout.NORTH);messages.setBorder(new EmptyBorder(8,8,12,8));conversation.add(scroll(messages),BorderLayout.CENTER);
         JPanel composer=new JPanel(new BorderLayout(10,7));composer.setOpaque(false);composer.setBorder(new EmptyBorder(12,0,0,0));draft.setRows(1);draft.setLineWrap(true);draft.setWrapStyleWord(true);style(draft);draft.getAccessibleContext().setAccessibleName("Сообщение");JScrollPane input=scroll(draft);input.setPreferredSize(new Dimension(100,44));composer.add(input,BorderLayout.CENTER);send.setPreferredSize(new Dimension(48,44));send.setText("➤");send.setToolTipText("Отправить");send.getAccessibleContext().setAccessibleName("Отправить");
         attach.setPreferredSize(new Dimension(44,44));attach.setBorder(new EmptyBorder(8,8,8,8));attach.setFont(new Font(ICON_FONT,Font.PLAIN,17));attach.setToolTipText("Отправить файл");attach.getAccessibleContext().setAccessibleName("Отправить файл");attach.addActionListener(e->chooseFile());
         mic.setPreferredSize(new Dimension(44,44));mic.setBorder(new EmptyBorder(8,8,8,8));mic.setFont(new Font(ICON_FONT,Font.PLAIN,17));mic.setToolTipText("Голосовое сообщение");mic.getAccessibleContext().setAccessibleName("Голосовое сообщение");mic.addActionListener(e->toggleVoice());
@@ -59,11 +83,11 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
         search.getDocument().addDocumentListener(change(this::renderContacts));draft.getDocument().addDocumentListener(change(()->{drafts.put(selected,draft.getText());send.setEnabled(service!=null&&!selected.isEmpty()&&!draft.getText().trim().isEmpty()&&!pending);}));add.addActionListener(e->addContact());invite.addActionListener(e->invitation());renderContacts();showText("Выберите контакт для переписки");
     }
     private static DocumentListener change(Runnable action){return new DocumentListener(){public void insertUpdate(DocumentEvent e){action.run();}public void removeUpdate(DocumentEvent e){action.run();}public void changedUpdate(DocumentEvent e){action.run();}};}
-    public void refresh(){if(pending||closed)return;pending=true;String id=selected;submit(()->{try{if(service==null)service=DesktopMessenger.chats(root).get();var list=service.contacts();var history=id.isEmpty()?java.util.List.<ChatRepository.Message>of():service.history(id);postUi(()->{if(closed)return;pending=false;cached=list;retry.setVisible(false);status.setText(recorder!=null?"Запись…":"История остаётся на устройствах участников");renderContacts();if(selected.equals(id))renderHistory(history);send.setEnabled(!selected.isEmpty()&&!draft.getText().trim().isEmpty());});}catch(Exception e){postUi(()->{pending=false;status.setText("Чаты недоступны. Повторите после разблокировки устройства.");retry.setVisible(true);});}});}
+    public void refresh(){if(pending||closed)return;pending=true;String id=selected;submit(()->{try{if(service==null)service=DesktopMessenger.chats(root).get();var list=service.contacts();var history=id.isEmpty()?java.util.List.<ChatRepository.Message>of():service.history(id);postUi(()->{if(closed)return;pending=false;cached=list;retry.setVisible(false);status.setText(recorder!=null?"Запись…":"История остаётся на устройствах участников");renderContacts();if(selected.equals(id))renderHistory(history);send.setEnabled(!selected.isEmpty()&&!draft.getText().trim().isEmpty());updateCallButton();});}catch(Exception e){postUi(()->{pending=false;status.setText("Чаты недоступны. Повторите после разблокировки устройства.");retry.setVisible(true);});}});}
     private void renderContacts(){contacts.setBackground(new Color(0x0C1E30));contacts.removeAll();String q=search.getText().trim().toLowerCase(Locale.ROOT);int count=0;for(var c:cached){if(!c.name().toLowerCase(Locale.ROOT).contains(q))continue;count++;
         JButton row=button("");row.setLayout(new BorderLayout(12,0));row.setAlignmentX(LEFT_ALIGNMENT);row.setMaximumSize(new Dimension(Integer.MAX_VALUE,76));row.setPreferredSize(new Dimension(260,76));row.setBackground(c.id().equals(selected)?new Color(0x21465B):SURFACE);
         JLabel avatar=new AvatarLabel(initials(c.name()));avatar.setHorizontalAlignment(SwingConstants.CENTER);avatar.setFont(new Font("Segoe UI",Font.BOLD,16));avatar.setOpaque(false);avatar.setBackground(new Color(0x247675));avatar.setPreferredSize(new Dimension(46,46));row.add(avatar,BorderLayout.WEST);JPanel copy=column();copy.setOpaque(false);JLabel name=label(c.name());name.setFont(new Font("Segoe UI",Font.BOLD,14));copy.add(name);JLabel hint=label("Личная переписка");hint.setFont(new Font("Segoe UI",Font.PLAIN,12));hint.setForeground(MUTED);copy.add(hint);row.add(copy,BorderLayout.CENTER);row.getAccessibleContext().setAccessibleName(c.name());
-        row.addActionListener(e->{drafts.put(selected,draft.getText());selected=c.id();heading.setText(c.name());activeAvatar.setText(initials(c.name()));draft.setText(drafts.getOrDefault(selected,""));signature="";showText("Загружаем историю…");revalidate();repaint();refresh();});contacts.add(row);contacts.add(Box.createVerticalStrut(6));}
+        row.addActionListener(e->{drafts.put(selected,draft.getText());selected=c.id();heading.setText(c.name());activeAvatar.setText(initials(c.name()));draft.setText(drafts.getOrDefault(selected,""));signature="";updateCallButton();showText("Загружаем историю…");revalidate();repaint();refresh();});contacts.add(row);contacts.add(Box.createVerticalStrut(6));}
         if(count==0){JTextArea empty=new JTextArea(q.isEmpty()?"Пока нет чатов. Добавьте контакт по приглашению.":"Контакты не найдены. Попробуйте другое имя.");style(empty);empty.setOpaque(false);empty.setForeground(MUTED);empty.setEditable(false);empty.setLineWrap(true);empty.setWrapStyleWord(true);contacts.add(empty);}contacts.revalidate();contacts.repaint();}
     private static String initials(String name){StringBuilder b=new StringBuilder();for(String part:name.trim().split("\\s+")){if(!part.isEmpty())b.appendCodePoint(part.codePointAt(0));if(b.codePointCount(0,b.length())==2)break;}return b.toString().toUpperCase(Locale.ROOT);}
     private void renderHistory(java.util.List<ChatRepository.Message> history){
@@ -88,6 +112,106 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
     private static String state(String s){return switch(s){case "delivered"->"Доставлено";case "sent"->"Отправлено";default->"Ожидает отправки";};}
     private void showText(String value){messages.removeAll();JLabel t=new JLabel(value);t.setForeground(MUTED);messages.add(t);messages.revalidate();messages.repaint();}
     private void send(){if(closed)return;String text=draft.getText().trim(),id=selected;if(text.isEmpty()||service==null||id.isEmpty())return;send.setEnabled(false);submit(()->{try{service.send(id,text);postUi(()->{if(selected.equals(id)&&draft.getText().trim().equals(text)){draft.setText("");drafts.put(id,"");}else if(drafts.getOrDefault(id,"").trim().equals(text))drafts.put(id,"");signature="";refresh();});}catch(Exception e){postUi(()->{status.setText("Сообщение не сохранено. Повторите отправку.");send.setEnabled(true);});}});}
+    /** The microphone is opened only after this explicit click; nothing rings or dials by itself. */
+    private void startCall(){
+        if(closed||activeCall())return;
+        if(selected.isEmpty()){status.setText("Выберите контакт для звонка");return;}
+        ChatService current=service;
+        if(current==null){status.setText("Чаты ещё не готовы");return;}
+        releaseCall();
+        callContact=selected;callName=nameFor(selected);callCallId="";callOffer="";
+        CallSession session=new CallSession(callListener);callSession=session;
+        showCall("Звоним… "+callName,false,false,true,false);updateCallButton();
+        session.start(current,selected,callName);
+    }
+    /** Receives CALL_OFFER/CALL_ANSWER/CALL_END from DesktopMessenger on any thread. */
+    public void deliverCall(ChatService source,String contactId,String name,int kind,String callId,String sdp){
+        if(closed)return;
+        Runnable delivery=()->handleCall(source,contactId,name,kind,callId,sdp);
+        if(SwingUtilities.isEventDispatchThread())delivery.run();else SwingUtilities.invokeLater(()->{if(!closed)delivery.run();});
+    }
+    private void handleCall(ChatService source,String contact,String displayName,int kind,String id,String sdp){
+        if(closed||source==null||contact==null||contact.isEmpty())return;
+        service=source;
+        if(kind==ChatWire.CALL_OFFER){
+            if(activeCall()){status.setText("Пропущен входящий звонок: уже идёт звонок");return;}
+            releaseCall();
+            callContact=contact;callName=displayName==null||displayName.isBlank()?nameFor(contact):displayName;callCallId=id==null?"":id;callOffer=sdp==null?"":sdp;
+            if(selected.isEmpty())selectContact(contact,callName);
+            CallSession session=new CallSession(callListener);callSession=session;
+            session.incoming(source,contact,callName,id,sdp);
+            updateCallButton();
+            return;
+        }
+        CallSession session=callSession;
+        if(session!=null)session.handle(contact,kind,id,sdp);
+    }
+    private void renderCall(CallSession.State state,String contactId,String displayName){
+        if(closed)return;
+        if(contactId!=null&&!contactId.isEmpty()){callContact=contactId;if(displayName!=null&&!displayName.isBlank())callName=displayName;}
+        if(callName==null||callName.isEmpty())callName=nameFor(callContact);
+        switch(state){
+            case CALLING->showCall("Звоним… "+callName,false,false,true,false);
+            case RINGING->showCall("Входящий звонок · "+callName,true,true,false,false);
+            case CONNECTED->showCall("В сети · "+callName,false,false,true,false);
+            case FAILED->showCall("Не удалось · "+callName,false,false,false,true);
+            case ENDED->{callPanel.setVisible(false);callOffer="";callCallId="";callSession=null;status.setText("Звонок завершён");}
+            case IDLE->{}
+        }
+        updateCallButton();callPanel.revalidate();callPanel.repaint();
+    }
+    private void showCall(String text,boolean accept,boolean reject,boolean end,boolean dismiss){
+        callTitle.setText(text);acceptCall.setVisible(accept);rejectCall.setVisible(reject);hangup.setVisible(end);dismissCall.setVisible(dismiss);
+        callPanel.setVisible(true);callPanel.revalidate();callPanel.repaint();
+    }
+    private void acceptIncoming(){
+        if(closed)return;
+        CallSession session=callSession;
+        if(session==null||callOffer.isEmpty()||callCallId.isEmpty())return;
+        ChatService current=service;
+        if(current==null){status.setText("Чаты ещё не готовы");return;}
+        String offer=callOffer,id=callCallId;callOffer="";callCallId="";
+        showCall("Соединяем… · "+callName,false,false,true,false);
+        session.accept(current,callContact,id,offer);updateCallButton();
+    }
+    private void rejectIncoming(){
+        CallSession session=callSession;
+        if(session!=null)session.reject(callContact);
+        callSession=null;callOffer="";callCallId="";callPanel.setVisible(false);status.setText("Звонок отклонён");updateCallButton();
+    }
+    private void hangupCall(){
+        CallSession session=callSession;
+        if(session!=null)session.hangup();
+        callPanel.setVisible(false);updateCallButton();
+    }
+    private void dismissCallPanel(){
+        CallSession session=callSession;callSession=null;if(session!=null)session.close();
+        callOffer="";callCallId="";callPanel.setVisible(false);updateCallButton();
+    }
+    /** Closes a stale (ended or failed) session before a new call is created. */
+    private void releaseCall(){
+        CallSession session=callSession;callSession=null;if(session!=null)session.close();
+        callOffer="";callCallId="";
+    }
+    private boolean activeCall(){
+        CallSession session=callSession;
+        if(session==null)return false;
+        CallSession.State current=session.state();
+        return current==CallSession.State.IDLE||current==CallSession.State.CALLING||current==CallSession.State.RINGING||current==CallSession.State.CONNECTED;
+    }
+    private void updateCallButton(){
+        call.setEnabled(!closed&&!selected.isEmpty()&&service!=null&&!activeCall());
+        call.setToolTipText(selected.isEmpty()?"Выберите контакт для звонка":"Позвонить контакту");
+    }
+    private void selectContact(String id,String displayName){
+        if(id.equals(selected))return;
+        drafts.put(selected,draft.getText());selected=id;heading.setText(displayName);activeAvatar.setText(initials(displayName));
+        draft.setText(drafts.getOrDefault(selected,""));signature="";updateCallButton();showText("Загружаем историю…");revalidate();repaint();refresh();
+    }
+    private String nameFor(String id){
+        for(var contact:cached)if(contact.id().equals(id))return contact.name();
+        return "Контакт";
+    }
     private void addContact(){JTextField code=new JTextField(),name=new JTextField();style(code);style(name);JPanel form=column();form.add(label("Код приглашения"));form.add(code);form.add(label("Имя контакта"));form.add(name);JTextArea trust=new JTextArea("Сравните код безопасности через независимый доверенный канал до добавления контакта.",3,30);style(trust);trust.setEditable(false);trust.setLineWrap(true);trust.setWrapStyleWord(true);form.add(trust);if(JOptionPane.showConfirmDialog(this,form,"Добавить контакт",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return;String codeValue=code.getText().trim(),nameValue=name.getText().trim();work(()->{String safety=ChatInvite.decode(codeValue).safetyCode();postUi(()->{if(JOptionPane.showConfirmDialog(this,"Код безопасности: "+safety+"\nСравните с контактом через независимый доверенный канал.\nКод совпадает?","Проверка контакта",JOptionPane.YES_NO_OPTION)==JOptionPane.YES_OPTION)work(()->service.addContact(codeValue,nameValue));});});}
     private void invitation(){JTextField host=new JTextField();style(host);host.setText(LocalAddress.preferred());JTextField relay=new JTextField();style(relay);relay.setToolTipText("host:port:pin — печатает узел relay; пусто — только прямое соединение");JPanel form=column();form.add(label("Адрес, доступный вашему контакту"));form.add(host);form.add(label("Relay для разных сетей (необязательно)"));form.add(relay);form.add(label("Локальный порт: "+(service==null?"—":service.localPort())));JTextArea notice=new JTextArea("Передавайте приглашение через доверенный канал. Создавайте свежее приглашение каждому контакту. Не используйте коды повторно. Адрес за NAT не становится автоматически доступным.",4,30);style(notice);notice.setLineWrap(true);notice.setWrapStyleWord(true);notice.setEditable(false);form.add(notice);if(JOptionPane.showConfirmDialog(this,form,"Моё приглашение",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return;String advertisedHost=host.getText().trim(),relayValue=relay.getText().trim();work(()->{String code=service.invitation(advertisedHost,relayValue);String safety=ChatInvite.decode(code).safetyCode();postUi(()->{JTextArea value=new JTextArea("Код безопасности: "+safety+"\n\n"+code,6,32);style(value);value.setLineWrap(true);value.setEditable(false);if(JOptionPane.showConfirmDialog(this,scroll(value),"Скопировать приглашение?",JOptionPane.OK_CANCEL_OPTION)==JOptionPane.OK_OPTION)Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(code),null);});});}
     /** Attachment bubble: name and human size, plus save and (for audio) playback actions. */
@@ -229,5 +353,5 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
     public int getScrollableBlockIncrement(Rectangle r,int orientation,int direction){return 200;}
     public boolean getScrollableTracksViewportWidth(){return true;}
     public boolean getScrollableTracksViewportHeight(){return true;}
-    @Override public void close(){closed=true;VoiceRecorder active=recorder;recorder=null;if(active!=null)active.stop();stopPlayback();worker.shutdownNow();}
+    @Override public void close(){if(closed)return;closed=true;CallSession activeCall=callSession;callSession=null;callOffer="";callCallId="";if(activeCall!=null)activeCall.close();VoiceRecorder active=recorder;recorder=null;if(active!=null)active.stop();stopPlayback();worker.shutdownNow();}
 }
