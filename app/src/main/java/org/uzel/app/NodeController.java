@@ -58,6 +58,7 @@ public final class NodeController {
     private volatile PairingManager pairing;
     private volatile AutoDiscoveryManager automatic;
     private volatile String bootstrapUrl="",pendingAutoId="";
+    private long autoMeshRetryAt;
     private volatile boolean bootstrapHosting;
     private volatile long requestedShareRateBps;
     private volatile PeerDiscovery discovery;
@@ -255,6 +256,7 @@ public final class NodeController {
         for(Peer p:peers.values())p.reachable=false;
     }
     public synchronized void disconnect(){
+        autoMeshRetryAt=System.currentTimeMillis()+120_000L;
         vpnGeneration.incrementAndGet();
         String autoTarget=pendingAutoId;pendingAutoId="";
         AutoDiscoveryManager manager=automatic;if(manager!=null&&!autoTarget.isEmpty())manager.cancel(autoTarget);
@@ -398,8 +400,32 @@ public final class NodeController {
             peer.autoDiscovered=true;peer.announced=true;peer.presence=presence;
             if(!peer.paired){peer.country=presence.country;peer.clients=presence.clients;peer.upload=presence.upload;peer.freeSlots=Math.max(0,3-presence.clients);peer.expiresAt=presence.expiresAt;}
         }
+        maybeAutoMesh(expected);
     }
-    private void verifyAutomaticPeer(Node expected,Peer peer,long epoch){
+    /**
+     * Joins the network without a tap: when a sharing peer is visible in the catalog and no
+     * session exists yet, the device with the larger fingerprint connects to the smaller one.
+     * The deterministic direction prevents both devices from dialling each other.
+     */
+    private synchronized void maybeAutoMesh(Node expected){
+        if(!prefs.getBoolean("autoMesh",true))return;
+        if(vpnConnected||busy||!pendingAutoId.isEmpty())return;
+        if(expected.clientCount()>0)return;
+        long now=System.currentTimeMillis();
+        if(now<autoMeshRetryAt)return;
+        String own=expected.invitation("127.0.0.1").fingerprint;
+        Peer best=null;
+        for(Peer peer:peers.values()){
+            if(peer.presence==null||peer.presence.expiresAt<=now)continue;
+            if(peer.id.compareTo(own)>=0)continue;
+            if(peer.presence.upload<=0)continue;
+            if(best==null||peer.presence.clients<best.presence.clients)best=peer;
+        }
+        if(best==null)return;
+        autoMeshRetryAt=now+60_000L;
+        final String target=best.id;
+        work.execute(()->{synchronized(this){if(!vpnConnected&&!busy&&pendingAutoId.isEmpty())connect(target);}});
+    }    private void verifyAutomaticPeer(Node expected,Peer peer,long epoch){
         String selected=peer.id;long selectedVpnEpoch=vpnGeneration.get();
         peerWork.execute(()->{
             try{
@@ -415,7 +441,24 @@ public final class NodeController {
             }catch(IOException unavailable){synchronized(this){if(epoch==generation.get()&&selectedVpnEpoch==vpnGeneration.get()&&pendingAutoId.equals(selected)){pendingAutoId="";status="UNREACHABLE";}}}
         });
     }
-    public void createPairing(){PairingManager owner=pairing;if(owner!=null&&!busy)owner.offer();}
+    /** This device's node invitation, empty while sharing is not running. */
+    public synchronized String nodeInvitation(){
+        Node current=node;if(current==null||!current.isSharing())return "";
+        String host=advertisedHost.isEmpty()?org.uzel.messenger.chat.LocalAddress.preferred():advertisedHost;
+        try{return current.invitation(host).encode();}catch(Exception unavailable){return "";}
+    }
+    /** A chat peer shared its node: remember it and join when this device is the dialler. */
+    public synchronized void acceptNodeInvite(String code){
+        try{
+            Invitation invite=Invitation.parse(code);
+            addPeer(invite);savePeers();refreshPeers();
+            Node current=node;if(current==null||!current.isSharing()||vpnConnected||busy)return;
+            String own=DeviceIdentity.load().fingerprint;
+            if(own.compareTo(invite.fingerprint)<=0)return;
+            final String target=invite.fingerprint;
+            work.execute(()->{synchronized(this){if(!vpnConnected&&!busy)connect(target);}});
+        }catch(Exception ignored){/* A malformed invitation must not disturb the chat. */}
+    }    public void createPairing(){PairingManager owner=pairing;if(owner!=null&&!busy)owner.offer();}
     /** A live paired chat stream; without one, asks the catalog discovery to pair this device. */
     public synchronized Socket openChatStream(String fingerprint)throws IOException {
         PairingManager owner=pairing;

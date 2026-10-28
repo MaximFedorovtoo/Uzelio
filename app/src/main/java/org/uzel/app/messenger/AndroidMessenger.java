@@ -20,6 +20,7 @@ public final class AndroidMessenger {
     /** Call signaling multiplexed onto the same authenticated chat listener as notifications. */
     public interface CallHandler {void call(String contactId,int kind,String callId,String sdp);}
     private static CompletableFuture<ChatService> chats;
+    private static volatile boolean meshStarted;
     private static volatile CallHandler callHandler;
     private AndroidMessenger(){}
     /** The screen owns call UI; a failing handler must never disturb message delivery. */
@@ -43,6 +44,9 @@ public final class AndroidMessenger {
                     if(MainActivity.visible&&MainActivity.activeTab==4)return;
                     ChatNotifications.show(app,service.contactName(contactId),message.text().isBlank()&&message.attachment()!=null?"Файл: "+message.attachment().name():message.text());
                 }
+                @Override public void node(String contactId,String invitation){
+                    try{NodeController.get(app).acceptNodeInvite(invitation);}catch(RuntimeException ignored){/* Mesh is optional. */}
+                }
                 @Override public void call(String contactId,int kind,String callId,String sdp){
                     // The call UI lives in the Chats screen; when that screen is not in front the
                     // system notification rings instead. Message notifications are untouched.
@@ -56,11 +60,29 @@ public final class AndroidMessenger {
                     try{handler.call(contactId,kind,callId,sdp);}catch(RuntimeException ignored){/* UI only */}
                 }
             });
+            startMesh(app,service);
             return service;
         }catch(Exception e){throw new CompletionException(e);}});
         return chats;
     }
-    /** Select a live non-VPN network on every connection, including after Wi-Fi changes. */
+    /**
+     * Automatic mesh: every chat contact receives this node's invitation until a tunnel exists.
+     * The receiver connects only when its fingerprint is larger, so one dialler is chosen for sure.
+     */
+    private static void startMesh(Context app,ChatService service){
+        if(meshStarted)return;meshStarted=true;
+        ScheduledExecutorService executor=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"uzelio-mesh");t.setDaemon(true);return t;});
+        executor.scheduleWithFixedDelay(()->{
+            try{
+                if(NodeController.get(app).snapshot().vpnConnected)return;
+                String invitation=NodeController.get(app).nodeInvitation();
+                if(invitation.isEmpty())return;
+                for(ChatRepository.Contact contact:service.contacts()){
+                    try{service.sendNode(contact.id(),invitation);}catch(Exception ignored){/* Retried on the next tick. */}
+                }
+            }catch(Exception ignored){/* The next tick retries. */}
+        },12,20,TimeUnit.SECONDS);
+    }    /** Select a live non-VPN network on every connection, including after Wi-Fi changes. */
     private static NetworkAccess physicalNetwork(Context app){return new NetworkAccess(){
         private Network network()throws IOException{
             ConnectivityManager cm=(ConnectivityManager)app.getSystemService(Context.CONNECTIVITY_SERVICE);

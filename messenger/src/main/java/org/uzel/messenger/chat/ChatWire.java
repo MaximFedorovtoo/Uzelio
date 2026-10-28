@@ -10,7 +10,7 @@ public final class ChatWire {
     public static final int MAX_WIRE=262144,MAX_TEXT=32768,FRAGMENT=16384;
     public static final int TEXT=1,ACK=2,FILE_META=3,FILE_CHUNK=4;
     public static final int MAX_FILE=8*1024*1024,MAX_CHUNK=32768,MAX_CHUNKS=256;
-    public static final int META_MAGIC=0x55434d32,CHUNK_MAGIC=0x55434d33,CALL_MAGIC=0x55434d34;
+    public static final int META_MAGIC=0x55434d32,CHUNK_MAGIC=0x55434d33,CALL_MAGIC=0x55434d34,NODE_MAGIC=0x55434d35;
     public static final int CALL_OFFER=5,CALL_ANSWER=6,CALL_END=7;
     public record CallFrame(int kind,String callId,String sdp){}
     /** Frame discriminator; 0 for a payload too short to carry a header. */
@@ -101,7 +101,21 @@ public final class ChatWire {
             return new CallFrame(kind,id,new String(sdp,StandardCharsets.UTF_8));
         }
     }
-    private static boolean validCallId(String id){return id!=null&&id.matches("[A-Za-z0-9-]{1,64}");}
+    /** One node invitation travelling inside the encrypted chat, so devices can join one network. */
+    public static byte[] encodeNode(String code)throws IOException {
+        if(code==null||code.isEmpty()||code.length()>8192)throw new IOException("Invalid node invitation");
+        var bytes=new ByteArrayOutputStream();
+        try(var out=new DataOutputStream(bytes)){out.writeInt(NODE_MAGIC);out.writeUTF(code);}
+        return bytes.toByteArray();
+    }
+    public static String decodeNode(byte[] bytes)throws IOException {
+        try(var in=new DataInputStream(new ByteArrayInputStream(bytes))){
+            if(in.readInt()!=NODE_MAGIC)throw new IOException("Invalid node invitation");
+            String code=in.readUTF();
+            if(code.isEmpty()||code.length()>8192)throw new IOException("Invalid node invitation");
+            return code;
+        }
+    }    private static boolean validCallId(String id){return id!=null&&id.matches("[A-Za-z0-9-]{1,64}");}
     private static boolean validName(String name){return name!=null&&!name.isBlank()&&name.length()<=200&&name.indexOf('\n')<0;}
     private static boolean validMime(String mime){return mime!=null&&mime.matches("[a-z0-9.+-]{1,100}/[a-z0-9.+-]{1,100}");}
     private static boolean validId(String id){return id!=null&&id.matches("[A-Za-z0-9_-]{1,128}");}

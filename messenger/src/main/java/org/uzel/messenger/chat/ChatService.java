@@ -25,6 +25,8 @@ public final class ChatService implements AutoCloseable {
         void incoming(String contactId,ChatRepository.Message message);
         /** Call signaling; default keeps message-only listeners valid. */
         default void call(String contactId,int kind,String callId,String sdp){}
+        /** A peer offered its node invitation, so this device can join the same network. */
+        default void node(String contactId,String invitation){}
     }
     private static final Listener QUIET=new Listener(){
         public void incoming(String contactId,ChatRepository.Message message){}
@@ -134,7 +136,22 @@ public final class ChatService implements AutoCloseable {
             });
         }catch(RejectedExecutionException full){/* Signaling is best effort. */}
     }
-    public ChatRepository.Message send(String contactId,String text)throws Exception {
+    /** Sends this node's invitation through the chat; best effort, never stored in history. */
+    public void sendNode(String contactId,String invitation)throws Exception {
+        ensureOpen();var contact=requireContact(contactId);ChatInvite invite=invites.get(contact.id());
+        byte[] frame=ChatWire.encodeNode(invitation);
+        messenger.establishIfAbsent(invite.address(),invite.bundle());
+        var outbound=messenger.send(invite.address(),"node_"+UUID.randomUUID().toString().replace("-",""),frame,(records,ignored)->{});
+        try{
+            deliveries.execute(()->{
+                try{transport.exchange(invite,outbound);}
+                catch(Exception direct){
+                    try{RelayClient fallback=relay(invite);if(fallback!=null)fallback.send(invite.address().getName(),outbound);}
+                    catch(Exception ignored){/* Best effort. */}
+                }
+            });
+        }catch(RejectedExecutionException full){/* Best effort. */}
+    }    public ChatRepository.Message send(String contactId,String text)throws Exception {
         ensureOpen();var contact=requireContact(contactId);ChatInvite invite=invites.get(contact.id());
         if(text==null||text.trim().isEmpty()||text.getBytes(StandardCharsets.UTF_8).length>ChatWire.MAX_TEXT)throw new IllegalArgumentException("Message must contain 1–32768 UTF-8 bytes");
         String id=UUID.randomUUID().toString();long now=System.currentTimeMillis();var message=new ChatRepository.Message(id,contactId,text,true,"queued",now);
@@ -233,7 +250,10 @@ public final class ChatService implements AutoCloseable {
                         try{listener.incoming(invite.id(),new ChatRepository.Message(chunk.id(),invite.id(),"",false,"received",assembly.time(),assembly.attachment()));}catch(RuntimeException ignored){/* notification only */}
                     }
                 }
-            }else if(magic==ChatWire.CALL_MAGIC){
+            }else if(magic==ChatWire.NODE_MAGIC){
+                String code=ChatWire.decodeNode(plain);ackId[0]="node_"+Integer.toHexString(code.hashCode());
+                if(acknowledgementOnly)throw new SecurityException("Expected an authenticated receipt");
+                if(fresh[0])try{listener.node(invite.id(),code);}catch(RuntimeException ignored){/* UI/network only */}            }else if(magic==ChatWire.CALL_MAGIC){
                 ChatWire.CallFrame call=ChatWire.decodeCall(plain);ackId[0]="call_"+call.callId()+"_"+call.kind();
                 if(acknowledgementOnly)throw new SecurityException("Expected an authenticated receipt");
                 if(fresh[0])try{listener.call(invite.id(),call.kind(),call.callId(),call.sdp());}catch(RuntimeException ignored){/* UI only */}
