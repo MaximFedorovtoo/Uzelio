@@ -21,10 +21,17 @@ public final class ChatService implements AutoCloseable {
     private final Map<String,RelayClient> relays=new ConcurrentHashMap<>();
     private final Map<String,Assembly> assemblies=new ConcurrentHashMap<>();
     private final Map<String,ChatInvite> invites=new ConcurrentHashMap<>();
-    @FunctionalInterface public interface Listener { void incoming(String contactId,ChatRepository.Message message); }
-    private volatile Listener listener=(contactId,message)->{};
+    public interface Listener {
+        void incoming(String contactId,ChatRepository.Message message);
+        /** Call signaling; default keeps message-only listeners valid. */
+        default void call(String contactId,int kind,String callId,String sdp){}
+    }
+    private static final Listener QUIET=new Listener(){
+        public void incoming(String contactId,ChatRepository.Message message){}
+    };
+    private volatile Listener listener=QUIET;
     /** UI notification hook; a failing listener never changes delivery or storage. */
-    public void listener(Listener value){listener=value==null?(contactId,message)->{}:value;}
+    public void listener(Listener value){listener=value==null?QUIET:value;}
     private final ScheduledExecutorService retries=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"chat-outbox");t.setDaemon(true);return t;});
     private final AtomicBoolean queuedRetry=new AtomicBoolean();
     private final Set<String> activeContacts=ConcurrentHashMap.newKeySet();
@@ -99,6 +106,22 @@ public final class ChatService implements AutoCloseable {
             messenger.send(invite.address(),operation,frame,(records,outbound)->repository.queueChunk(records,contactId,operation,outbound));
         }
         retrySoon();return message;
+    }
+    /** Best-effort call signaling: never stored in history and never replayed after a restart. */
+    public void sendCall(String contactId,int kind,String callId,String sdp)throws Exception {
+        ensureOpen();var contact=requireContact(contactId);ChatInvite invite=invites.get(contact.id());
+        byte[] frame=ChatWire.encodeCall(new ChatWire.CallFrame(kind,callId,sdp));
+        messenger.establishIfAbsent(invite.address(),invite.bundle());
+        var outbound=messenger.send(invite.address(),"call_"+UUID.randomUUID().toString().replace("-",""),frame,(records,ignored)->{});
+        try{
+            deliveries.execute(()->{
+                try{transport.exchange(invite,outbound);}
+                catch(Exception direct){
+                    try{RelayClient fallback=relay(invite);if(fallback!=null)fallback.send(invite.address().getName(),outbound);}
+                    catch(Exception ignored){/* Signaling is best effort. */}
+                }
+            });
+        }catch(RejectedExecutionException full){/* Signaling is best effort. */}
     }
     public ChatRepository.Message send(String contactId,String text)throws Exception {
         ensureOpen();var contact=requireContact(contactId);ChatInvite invite=invites.get(contact.id());
@@ -199,6 +222,10 @@ public final class ChatService implements AutoCloseable {
                         try{listener.incoming(invite.id(),new ChatRepository.Message(chunk.id(),invite.id(),"",false,"received",assembly.time(),assembly.attachment()));}catch(RuntimeException ignored){/* notification only */}
                     }
                 }
+            }else if(magic==ChatWire.CALL_MAGIC){
+                ChatWire.CallFrame call=ChatWire.decodeCall(plain);ackId[0]="call_"+call.callId()+"_"+call.kind();
+                if(acknowledgementOnly)throw new SecurityException("Expected an authenticated receipt");
+                if(fresh[0])try{listener.call(invite.id(),call.kind(),call.callId(),call.sdp());}catch(RuntimeException ignored){/* UI only */}
             }else{
                 ChatWire.Frame decoded=ChatWire.decode(plain);frame[0]=decoded;ackId[0]=decoded.id();
                 if(acknowledgementOnly&&decoded.kind()!=ChatWire.ACK)throw new SecurityException("Expected an authenticated receipt");
