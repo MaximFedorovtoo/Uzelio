@@ -44,8 +44,8 @@ dependencies {
     implementation 'org.signal:libsignal-android:0.105.4'
     implementation 'net.zetetic:sqlcipher-android:4.19.1'
     implementation 'androidx.sqlite:sqlite:2.7.0'
-    implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
     implementation 'com.google.zxing:core:3.5.3'
+    implementation 'androidx.core:core:1.13.1'
     implementation project(':core')
     // Run tools/bootstrap-traversal.ps1; pinned MavenCentral AAR hash is checked there.
     implementation files(rootProject.file('.tools/traversal/android-144.7559.15.aar'))

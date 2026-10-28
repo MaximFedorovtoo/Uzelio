@@ -48,5 +48,14 @@
                 android:value="Keeps the chat listener running so incoming messages and calls are delivered while the app is off screen"/>
         </service>
         <uses-library android:name="android.test.runner" android:required="false"/>
-    </application>
+            <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+</application>
 </manifest>

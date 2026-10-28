@@ -175,9 +175,13 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
     private void updateComposer(){boolean ready=service!=null&&!selected.isEmpty();boolean inCall=call!=null&&call.isActive();attach.setEnabled(ready&&recorder==null&&!inCall);voice.setEnabled((ready||recorder!=null)&&!inCall);callButton.setEnabled(service!=null&&!selected.isEmpty()&&recorder==null&&!inCall);videoButton.setEnabled(service!=null&&!selected.isEmpty()&&recorder==null&&!inCall);}
     private void pickFile(){if(closed||recorder!=null||service==null||selected.isEmpty())return;attachmentContact=selected;Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("*/*");intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);try{activity.startActivityForResult(intent,REQUEST_FILE);}catch(Exception e){attachmentContact="";fail(R.string.chat_file_unreadable);}}
     public void onActivityResult(int request,int result,Intent data){
-        if(request==REQUEST_QR){
-            String contents=result==android.app.Activity.RESULT_OK&&data!=null?data.getStringExtra("SCAN_RESULT"):null;
-            if(contents!=null){int start=contents.indexOf("uzelio-chat:");if(start>=0){openAddContact(contents.substring(start).trim());return;}}
+        if(request==REQUEST_QR_CAPTURE){
+            java.io.File photo=qrPhoto;qrPhoto=null;
+            if(photo==null||!photo.exists())return;
+            try{String contents=decodeQr(photo);photo.delete();
+                if(contents!=null){int start=contents.indexOf("uzelio-chat:");if(start>=0){openAddContact(contents.substring(start).trim());return;}}
+                Toast.makeText(activity,R.string.chat_pair_none,Toast.LENGTH_LONG).show();
+            }catch(RuntimeException ignored){Toast.makeText(activity,R.string.chat_pair_none,Toast.LENGTH_LONG).show();}
             return;
         }
         if(request!=REQUEST_FILE)return;String contact=attachmentContact;attachmentContact="";if(result!=Activity.RESULT_OK||data==null||data.getData()==null||closed)return;String target=contact.isEmpty()?selected:contact;if(target.isEmpty())return;sendPicked(data.getData(),target);}
@@ -599,16 +603,34 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
         if(value.length()!=6){Toast.makeText(activity,R.string.chat_pair_none,Toast.LENGTH_SHORT).show();return;}
         submit(()->{String found=CodePairing.lookup(value,6000);postUi(()->{if(found==null)Toast.makeText(activity,R.string.chat_pair_none,Toast.LENGTH_LONG).show();else openAddContact(found);});});
     }
+    public static final int REQUEST_QR_CAPTURE=79;
+    /** Uses the system camera app; the photo is decoded locally, so no scanner activity is needed. */
     private void scanPairQr(){
-        Intent scan=new Intent(activity,com.journeyapps.barcodescanner.CaptureActivity.class);
-        scan.setAction("com.google.zxing.client.android.SCAN");
-        scan.putExtra("SCAN_FORMATS","QR_CODE");
-        scan.putExtra("PROMPT_MESSAGE",activity.getString(R.string.chat_pair_scan));
-        scan.putExtra("BEEP_ENABLED",false);
-        try{activity.startActivityForResult(scan,REQUEST_QR);}
-        catch(RuntimeException unavailable){Toast.makeText(activity,R.string.chat_pair_scan,Toast.LENGTH_SHORT).show();}
+        try{
+            java.io.File dir=new java.io.File(activity.getCacheDir(),"qr");dir.mkdirs();
+            java.io.File photo=new java.io.File(dir,"scan.jpg");
+            android.net.Uri uri=androidx.core.content.FileProvider.getUriForFile(activity,activity.getPackageName()+".files",photo);
+            Intent capture=new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE);
+            capture.putExtra(android.provider.MediaStore.EXTRA_OUTPUT,uri);
+            capture.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            if(capture.resolveActivity(activity.getPackageManager())==null){Toast.makeText(activity,R.string.chat_pair_scan,Toast.LENGTH_SHORT).show();return;}
+            qrPhoto=photo;
+            activity.startActivityForResult(capture,REQUEST_QR_CAPTURE);
+        }catch(RuntimeException unavailable){Toast.makeText(activity,R.string.chat_pair_scan,Toast.LENGTH_SHORT).show();}
     }
-    private android.graphics.Bitmap qr(String text){
+    private java.io.File qrPhoto;
+    private String decodeQr(java.io.File file){
+        try{
+            android.graphics.Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(file.getAbsolutePath());
+            if(bitmap==null)return null;
+            int width=bitmap.getWidth(),height=bitmap.getHeight();
+            int[] pixels=new int[width*height];
+            bitmap.getPixels(pixels,0,width,0,0,width,height);
+            return new com.google.zxing.MultiFormatReader().decode(
+                    new com.google.zxing.BinaryBitmap(new com.google.zxing.common.HybridBinarizer(
+                            new com.google.zxing.RGBLuminanceSource(width,height,pixels)))).getText();
+        }catch(Exception unreadable){return null;}
+    }    private android.graphics.Bitmap qr(String text){
         try{
             java.util.EnumMap<com.google.zxing.EncodeHintType,Object> hints=new java.util.EnumMap<>(com.google.zxing.EncodeHintType.class);
             hints.put(com.google.zxing.EncodeHintType.ERROR_CORRECTION,com.google.zxing.qrcode.decoder.ErrorCorrectionLevel.L);
