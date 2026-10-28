@@ -7,6 +7,7 @@ import java.awt.*;
 import java.awt.event.*;
 import java.awt.geom.*;
 import java.awt.datatransfer.StringSelection;
+import java.awt.image.BufferedImage;
 import javax.sound.sampled.*;
 import java.io.*;
 import java.nio.file.Files;
@@ -14,6 +15,8 @@ import java.nio.file.Path;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.uzel.messenger.chat.ChatService;
 import org.uzel.messenger.chat.ChatInvite;
 import org.uzel.messenger.chat.ChatRepository;
@@ -35,9 +38,12 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
     private final JLabel status=new JLabel("Добавьте контакт по приглашению"),heading=new JLabel("Выберите контакт для переписки");
     private final JButton send=button("Отправить"),retry=button("Повторить подключение"),back=button("‹"),attach=button("📎"),mic=button("🎤");
     private final JLabel activeAvatar=new AvatarLabel("");
-    private final JButton call=smallButton("Позвонить");
+    private final JButton call=smallButton("Позвонить"),videoCall=smallButton("Видеозвонок");
     private final JPanel callPanel=column(),callActions=new JPanel(new FlowLayout(FlowLayout.LEFT,8,6));
     private final JLabel callTitle=new JLabel();
+    private final VideoSurface callVideo=new VideoSurface();
+    private final AtomicReference<BufferedImage> pendingRemoteFrame=new AtomicReference<>(),pendingLocalFrame=new AtomicReference<>();
+    private final AtomicBoolean frameFlushScheduled=new AtomicBoolean();
     private final JButton acceptCall=smallButton("Принять"),rejectCall=smallButton("Отклонить"),hangup=smallButton("Завершить"),dismissCall=smallButton("Скрыть");
     private final CallSession.Listener callListener=new CallSession.Listener(){
         public void state(CallSession source,CallSession.State state,String contactId,String name){
@@ -46,8 +52,13 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
         public void error(CallSession source,String message){
             SwingUtilities.invokeLater(()->{if(!closed&&source==callSession&&message!=null&&!message.isBlank())status.setText(message);});
         }
+        public void videoFrame(CallSession source,BufferedImage image,boolean local){offerVideoFrame(source,image,local);}
+        public void videoNotice(CallSession source,String message){
+            SwingUtilities.invokeLater(()->{if(!closed&&source==callSession&&message!=null&&!message.isBlank())status.setText(message);});
+        }
     };
-    private CallSession callSession;
+    private volatile CallSession callSession;
+    private volatile boolean videoCallMode;
     private String callContact="",callName="",callCallId="",callOffer="";
     private volatile VoiceRecorder recorder;
     private volatile String playbackId="";
@@ -66,14 +77,16 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
         JLabel sectionTitle=label("Чаты");sectionTitle.setFont(new Font("Segoe UI",Font.BOLD,26));titleRow.add(sectionTitle,BorderLayout.CENTER);
         JButton add=button("+");add.setPreferredSize(new Dimension(38,38));add.setToolTipText("Добавить контакт");add.getAccessibleContext().setAccessibleName("Добавить контакт");titleRow.add(add,BorderLayout.EAST);tools.add(titleRow);tools.add(Box.createVerticalStrut(16));
         style(search);search.setBackground(SURFACE2);search.setBorder(new RoundedBorder(LINE_STRONG,999,new Insets(9,14,9,14)));search.setToolTipText("Поиск по чатам");search.getAccessibleContext().setAccessibleName("Поиск по чатам");JLabel searchLabel=label("Поиск по чатам");searchLabel.setFont(new Font("Segoe UI",Font.PLAIN,11));searchLabel.setForeground(MUTED2);searchLabel.setAlignmentX(Component.LEFT_ALIGNMENT);searchLabel.setMaximumSize(new Dimension(Integer.MAX_VALUE,16));tools.add(searchLabel);tools.add(search);sidebar.add(tools,BorderLayout.NORTH);sidebar.add(scroll(contacts),BorderLayout.CENTER);
-        JPanel footer=column();footer.setOpaque(false);JPanel privacyCard=new SurfacePanel(SURFACE,18);privacyCard.setLayout(new BoxLayout(privacyCard,BoxLayout.Y_AXIS));privacyCard.setBorder(new EmptyBorder(12,14,12,14));JLabel privacyTitle=label("Ваши разговоры — у вас");privacyTitle.setFont(new Font("Segoe UI",Font.BOLD,13));privacyCard.add(privacyTitle);JTextArea privacy=new JTextArea("История хранится только на устройствах участников.",3,20);style(privacy);privacy.setOpaque(false);privacy.setEditable(false);privacy.setLineWrap(true);privacy.setWrapStyleWord(true);privacy.setFont(new Font("Segoe UI",Font.PLAIN,11));privacy.setForeground(MUTED);privacyCard.add(privacy);footer.add(privacyCard);footer.add(Box.createVerticalStrut(10));JButton invite=button("Моё приглашение");footer.add(invite);status.setFont(new Font("Segoe UI",Font.PLAIN,11));status.setForeground(MUTED2);footer.add(status);retry.setVisible(false);retry.addActionListener(e->{if(service==null)refresh();else work(()->service.retryNow());});footer.add(retry);sidebar.add(footer,BorderLayout.SOUTH);
+        JPanel footer=column();footer.setOpaque(false);JPanel privacyCard=new SurfacePanel(SURFACE,16);privacyCard.setLayout(new BoxLayout(privacyCard,BoxLayout.Y_AXIS));privacyCard.setBorder(new EmptyBorder(12,14,12,14));JLabel privacyTitle=label("Ваши разговоры — у вас");privacyTitle.setFont(new Font("Segoe UI",Font.BOLD,13));privacyCard.add(privacyTitle);JTextArea privacy=new JTextArea("История хранится только на устройствах участников.",3,20);style(privacy);privacy.setOpaque(false);privacy.setEditable(false);privacy.setLineWrap(true);privacy.setWrapStyleWord(true);privacy.setFont(new Font("Segoe UI",Font.PLAIN,11));privacy.setForeground(MUTED);privacyCard.add(privacy);footer.add(privacyCard);footer.add(Box.createVerticalStrut(10));JButton invite=button("Моё приглашение");footer.add(invite);status.setFont(new Font("Segoe UI",Font.PLAIN,11));status.setForeground(MUTED2);footer.add(status);retry.setVisible(false);retry.addActionListener(e->{if(service==null)refresh();else work(()->service.retryNow());});footer.add(retry);sidebar.add(footer,BorderLayout.SOUTH);
         JPanel list=sidebar;
         JPanel center=new JPanel(null){public void doLayout(){int w=getWidth(),h=getHeight();boolean wide=w>700;back.setVisible(!wide);list.setVisible(wide||selected.isEmpty());conversation.setVisible(wide||!selected.isEmpty());if(wide){list.setBounds(0,0,320,h);conversation.setBounds(320,0,Math.max(0,w-320),h);}else{list.setBounds(0,0,w,h);conversation.setBounds(0,0,w,h);}}};center.setOpaque(false);center.add(list);center.add(conversation);add(center,BorderLayout.CENTER);
         conversation.setBackground(BG);conversation.setBorder(new EmptyBorder(16,24,14,24));
         JPanel title=column();JPanel head=new JPanel(new BorderLayout(10,0));head.setOpaque(false);back.setPreferredSize(new Dimension(36,36));back.setToolTipText("Назад к чатам");back.addActionListener(e->{drafts.put(selected,draft.getText());selected="";updateCallButton();revalidate();repaint();});head.add(back,BorderLayout.WEST);heading.setForeground(TEXT);heading.setFont(new Font("Segoe UI",Font.BOLD,19));JPanel person=new JPanel(new BorderLayout(12,0));person.setOpaque(false);activeAvatar.setPreferredSize(new Dimension(42,42));person.add(activeAvatar,BorderLayout.WEST);person.add(heading,BorderLayout.CENTER);head.add(person,BorderLayout.CENTER);
-        call.setEnabled(false);call.setToolTipText("Позвонить контакту");call.getAccessibleContext().setAccessibleName("Позвонить контакту");call.addActionListener(e->startCall());head.add(call,BorderLayout.EAST);title.add(head);
+        call.setEnabled(false);call.setToolTipText("Позвонить контакту");call.getAccessibleContext().setAccessibleName("Позвонить контакту");call.addActionListener(e->startCall());
+        videoCall.setEnabled(false);videoCall.setToolTipText("Видеозвонок контакту");videoCall.getAccessibleContext().setAccessibleName("Видеозвонок контакту");videoCall.addActionListener(e->startVideoCall());
+        JPanel callButtons=new JPanel(new FlowLayout(FlowLayout.RIGHT,6,0));callButtons.setOpaque(false);callButtons.add(call);callButtons.add(videoCall);head.add(callButtons,BorderLayout.EAST);title.add(head);
         JLabel route=new JLabel("Личная переписка · сквозное шифрование",SwingConstants.CENTER);route.setForeground(MUTED2);route.setFont(new Font("Segoe UI",Font.PLAIN,11));route.setBorder(new EmptyBorder(14,0,14,0));route.setAlignmentX(Component.CENTER_ALIGNMENT);route.setMaximumSize(new Dimension(Integer.MAX_VALUE,44));title.add(route);
-        callTitle.setForeground(TEXT);callTitle.setFont(new Font("Segoe UI",Font.PLAIN,12));callPanel.setOpaque(false);callPanel.setBorder(new EmptyBorder(0,0,10,0));callPanel.setVisible(false);callPanel.add(callTitle);callActions.setOpaque(false);
+        callTitle.setForeground(TEXT);callTitle.setFont(new Font("Segoe UI",Font.PLAIN,12));callPanel.setOpaque(false);callPanel.setBorder(new EmptyBorder(0,0,10,0));callPanel.setVisible(false);callPanel.add(callTitle);callVideo.setVisible(false);callVideo.setAlignmentX(Component.LEFT_ALIGNMENT);callPanel.add(callVideo);callActions.setOpaque(false);
         acceptCall.setToolTipText("Принять звонок");acceptCall.getAccessibleContext().setAccessibleName("Принять звонок");acceptCall.addActionListener(e->acceptIncoming());
         rejectCall.setToolTipText("Отклонить звонок");rejectCall.getAccessibleContext().setAccessibleName("Отклонить звонок");rejectCall.addActionListener(e->rejectIncoming());
         hangup.setToolTipText("Завершить звонок");hangup.getAccessibleContext().setAccessibleName("Завершить звонок");hangup.addActionListener(e->hangupCall());
@@ -122,7 +135,7 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
         BubblePanel(boolean outgoing){this.outgoing=outgoing;setOpaque(false);}
         protected void paintComponent(Graphics raw){Graphics2D g=(Graphics2D)raw.create();g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);int width=getWidth(),height=getHeight();if(width>1&&height>1){Shape shape=bubbleShape(width-1,height-1,outgoing);g.setColor(new Color(0,0,0,55));g.translate(0,2);g.fill(shape);g.translate(0,-2);g.setColor(outgoing?new Color(56,240,221,42):SURFACE);g.fill(shape);g.setColor(outgoing?new Color(56,240,221,120):LINE);g.setStroke(new BasicStroke(1f));g.draw(shape);}g.dispose();super.paintComponent(raw);}
     }
-    private static final class AvatarLabel extends JLabel {private Color tint=CYAN;AvatarLabel(String value){super(value,SwingConstants.CENTER);setForeground(VOID);setFont(new Font("Segoe UI",Font.BOLD,16));setOpaque(false);}void tint(Color value){tint=value;repaint();}protected void paintComponent(Graphics raw){Graphics2D g=(Graphics2D)raw.create();g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);int width=getWidth(),height=getHeight();if(width>0&&height>0){g.setPaint(new GradientPaint(0,0,tint.brighter(),width,height,tint));g.fillRoundRect(0,0,width,height,14,14);g.setColor(new Color(255,255,255,28));g.drawRoundRect(0,0,width-1,height-1,14,14);}g.dispose();super.paintComponent(raw);}}
+    private static final class AvatarLabel extends JLabel {private Color tint=CYAN;AvatarLabel(String value){super(value,SwingConstants.CENTER);setForeground(VOID);setFont(new Font("Segoe UI",Font.BOLD,16));setOpaque(false);}void tint(Color value){tint=value;repaint();}protected void paintComponent(Graphics raw){Graphics2D g=(Graphics2D)raw.create();g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);int width=getWidth(),height=getHeight();if(width>0&&height>0){g.setPaint(new GradientPaint(0,0,tint.brighter(),width,height,tint));g.fillRoundRect(0,0,width,height,16,16);g.setColor(new Color(255,255,255,28));g.drawRoundRect(0,0,width-1,height-1,16,16);}g.dispose();super.paintComponent(raw);}}
     private static final class BubbleArea extends JTextArea {BubbleArea(String value){super(value);setOpaque(false);}protected void paintComponent(Graphics raw){super.paintComponent(raw);}}
     private static String state(String s){return switch(s){case "delivered"->"Доставлено";case "sent"->"Отправлено";default->"Ожидает отправки";};}
     private void showText(String value){messages.removeAll();JLabel t=new JLabel(value,SwingConstants.CENTER);t.setForeground(MUTED);t.setFont(new Font("Segoe UI",Font.PLAIN,14));t.setMaximumSize(new Dimension(Integer.MAX_VALUE,t.getPreferredSize().height));messages.add(Box.createVerticalStrut(28));messages.add(t);messages.revalidate();messages.repaint();}
@@ -134,10 +147,22 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
         ChatService current=service;
         if(current==null){status.setText("Чаты ещё не готовы");return;}
         releaseCall();
-        callContact=selected;callName=nameFor(selected);callCallId="";callOffer="";
+        callContact=selected;callName=nameFor(selected);callCallId="";callOffer="";videoCallMode=false;callVideo.clear();
         CallSession session=new CallSession(callListener);callSession=session;
         showCall("Звоним… "+callName,false,false,true,false);updateCallButton();
         session.start(current,selected,callName);
+    }
+    /** The camera is opened only after this explicit click; a missing camera leaves the call audio-only. */
+    private void startVideoCall(){
+        if(closed||activeCall())return;
+        if(selected.isEmpty()){status.setText("Выберите контакт для видеозвонка");return;}
+        ChatService current=service;
+        if(current==null){status.setText("Чаты ещё не готовы");return;}
+        releaseCall();
+        callContact=selected;callName=nameFor(selected);callCallId="";callOffer="";videoCallMode=true;callVideo.clear();
+        CallSession session=new CallSession(callListener);callSession=session;
+        showCall("Видеозвонок… "+callName,false,false,true,false);updateCallButton();
+        session.startVideo(current,selected,callName);
     }
     /** Receives CALL_OFFER/CALL_ANSWER/CALL_END from DesktopMessenger on any thread. */
     public void deliverCall(ChatService source,String contactId,String name,int kind,String callId,String sdp){
@@ -152,6 +177,7 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
             if(activeCall()){status.setText("Пропущен входящий звонок: уже идёт звонок");return;}
             releaseCall();
             callContact=contact;callName=displayName==null||displayName.isBlank()?nameFor(contact):displayName;callCallId=id==null?"":id;callOffer=sdp==null?"":sdp;
+            videoCallMode=CallSession.hasVideoStream(sdp);callVideo.clear();
             if(selected.isEmpty())selectContact(contact,callName);
             CallSession session=new CallSession(callListener);callSession=session;
             session.incoming(source,contact,callName,id,sdp);
@@ -166,17 +192,18 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
         if(contactId!=null&&!contactId.isEmpty()){callContact=contactId;if(displayName!=null&&!displayName.isBlank())callName=displayName;}
         if(callName==null||callName.isEmpty())callName=nameFor(callContact);
         switch(state){
-            case CALLING->showCall("Звоним… "+callName,false,false,true,false);
-            case RINGING->showCall("Входящий звонок · "+callName,true,true,false,false);
-            case CONNECTED->showCall("В сети · "+callName,false,false,true,false);
-            case FAILED->showCall("Не удалось · "+callName,false,false,false,true);
-            case ENDED->{callPanel.setVisible(false);callOffer="";callCallId="";callSession=null;status.setText("Звонок завершён");}
+            case CALLING->showCall((videoCallMode?"Видеозвонок… ":"Звоним… ")+callName,false,false,true,false);
+            case RINGING->showCall((videoCallMode?"Входящий видеозвонок · ":"Входящий звонок · ")+callName,true,true,false,false);
+            case CONNECTED->showCall((videoCallMode?"Видео · ":"В сети · ")+callName,false,false,true,false);
+            case FAILED->{callVideo.clear();showCall("Не удалось · "+callName,false,false,false,true);}
+            case ENDED->{clearVideo();callPanel.setVisible(false);callOffer="";callCallId="";callSession=null;status.setText("Звонок завершён");}
             case IDLE->{}
         }
         updateCallButton();callPanel.revalidate();callPanel.repaint();
     }
     private void showCall(String text,boolean accept,boolean reject,boolean end,boolean dismiss){
         callTitle.setText(text);acceptCall.setVisible(accept);rejectCall.setVisible(reject);hangup.setVisible(end);dismissCall.setVisible(dismiss);
+        callVideo.setVisible(videoCallMode&&!accept&&!dismiss);
         callPanel.setVisible(true);callPanel.revalidate();callPanel.repaint();
     }
     private void acceptIncoming(){
@@ -192,21 +219,21 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
     private void rejectIncoming(){
         CallSession session=callSession;
         if(session!=null)session.reject(callContact);
-        callSession=null;callOffer="";callCallId="";callPanel.setVisible(false);status.setText("Звонок отклонён");updateCallButton();
+        callSession=null;callOffer="";callCallId="";clearVideo();callPanel.setVisible(false);status.setText("Звонок отклонён");updateCallButton();
     }
     private void hangupCall(){
         CallSession session=callSession;
         if(session!=null)session.hangup();
-        callPanel.setVisible(false);updateCallButton();
+        callVideo.clear();callPanel.setVisible(false);updateCallButton();
     }
     private void dismissCallPanel(){
         CallSession session=callSession;callSession=null;if(session!=null)session.close();
-        callOffer="";callCallId="";callPanel.setVisible(false);updateCallButton();
+        callOffer="";callCallId="";clearVideo();callPanel.setVisible(false);updateCallButton();
     }
     /** Closes a stale (ended or failed) session before a new call is created. */
     private void releaseCall(){
         CallSession session=callSession;callSession=null;if(session!=null)session.close();
-        callOffer="";callCallId="";
+        callOffer="";callCallId="";clearVideo();
     }
     private boolean activeCall(){
         CallSession session=callSession;
@@ -215,8 +242,28 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
         return current==CallSession.State.IDLE||current==CallSession.State.CALLING||current==CallSession.State.RINGING||current==CallSession.State.CONNECTED;
     }
     private void updateCallButton(){
-        call.setEnabled(!closed&&!selected.isEmpty()&&service!=null&&!activeCall());
+        boolean ready=!closed&&!selected.isEmpty()&&service!=null&&!activeCall();
+        call.setEnabled(ready);videoCall.setEnabled(ready);
         call.setToolTipText(selected.isEmpty()?"Выберите контакт для звонка":"Позвонить контакту");
+        videoCall.setToolTipText(selected.isEmpty()?"Выберите контакт для видеозвонка":"Видеозвонок контакту");
+    }
+    /** Coalesces camera and remote frames so a busy UI thread never queues large images. */
+    private void offerVideoFrame(CallSession source,BufferedImage image,boolean local){
+        if(closed||image==null||source!=callSession)return;
+        if(local)pendingLocalFrame.set(image);else pendingRemoteFrame.set(image);
+        if(frameFlushScheduled.compareAndSet(false,true)){
+            SwingUtilities.invokeLater(()->{
+                frameFlushScheduled.set(false);
+                if(closed)return;
+                BufferedImage remote=pendingRemoteFrame.getAndSet(null),preview=pendingLocalFrame.getAndSet(null);
+                if(remote!=null)callVideo.setRemote(remote);
+                if(preview!=null)callVideo.setPreview(preview);
+            });
+        }
+    }
+    private void clearVideo(){
+        videoCallMode=false;pendingRemoteFrame.set(null);pendingLocalFrame.set(null);
+        callVideo.clear();callVideo.setVisible(false);
     }
     private void selectContact(String id,String displayName){
         if(id.equals(selected))return;
@@ -377,15 +424,64 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
         SurfacePanel(Color fill,int radius){this.fill=fill;this.radius=radius;setOpaque(false);}
         protected void paintComponent(Graphics raw){Graphics2D g=(Graphics2D)raw.create();g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);int w=getWidth(),h=getHeight();if(w>0&&h>0){int arc=Math.min(radius,Math.min(w,h));g.setColor(fill);g.fillRoundRect(0,0,w-1,h-1,arc,arc);g.setColor(LINE);g.drawRoundRect(0,0,w-1,h-1,arc,arc);}g.dispose();super.paintComponent(raw);}
     }
+    /** One video stage: the remote picture fills it and the local camera sits in a small corner window. */
+    private static final class VideoSurface extends JPanel {
+        private volatile BufferedImage remote,preview;
+        VideoSurface(){setOpaque(false);setPreferredSize(new Dimension(480,300));}
+        public Dimension getMaximumSize(){return new Dimension(Integer.MAX_VALUE,300);}
+        void setRemote(BufferedImage image){remote=image;repaint();}
+        void setPreview(BufferedImage image){preview=image;repaint();}
+        void clear(){remote=null;preview=null;repaint();}
+        protected void paintComponent(Graphics raw){
+            super.paintComponent(raw);
+            Graphics2D g=(Graphics2D)raw.create();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            int w=getWidth(),h=getHeight();
+            if(w>1&&h>1){
+                Shape area=new RoundRectangle2D.Float(0,0,w-1,h-1,18,18);
+                g.setColor(new Color(0x0A1622));g.fill(area);
+                BufferedImage picture=remote;
+                if(picture!=null){
+                    Shape previous=g.getClip();g.setClip(area);
+                    double scale=Math.min((w-16.0)/picture.getWidth(),(h-16.0)/picture.getHeight());
+                    int dw=Math.max(1,(int)Math.round(picture.getWidth()*scale)),dh=Math.max(1,(int)Math.round(picture.getHeight()*scale));
+                    g.drawImage(picture,(w-dw)/2,(h-dh)/2,dw,dh,null);
+                    g.setClip(previous);
+                }else{
+                    g.setColor(MUTED2);g.setFont(new Font("Segoe UI",Font.PLAIN,12));
+                    String hint="Ожидаем видео собеседника";
+                    g.drawString(hint,(w-g.getFontMetrics().stringWidth(hint))/2,h/2);
+                }
+                BufferedImage self=preview;
+                if(self!=null){
+                    int pw=Math.max(96,Math.min(160,w/3));
+                    int ph=Math.max(72,Math.round(pw*(float)self.getHeight()/self.getWidth()));
+                    int px=w-pw-12,py=h-ph-12;
+                    Shape frame=new RoundRectangle2D.Float(px,py,pw,ph,12,12);
+                    g.setColor(new Color(0,0,0,90));g.fill(new RoundRectangle2D.Float(px+1,py+2,pw,ph,12,12));
+                    Shape previous=g.getClip();g.setClip(frame);
+                    double cover=Math.max((double)pw/self.getWidth(),(double)ph/self.getHeight());
+                    int dw=Math.max(1,(int)Math.round(self.getWidth()*cover)),dh=Math.max(1,(int)Math.round(self.getHeight()*cover));
+                    g.drawImage(self,px+(pw-dw)/2,py+(ph-dh)/2,dw,dh,null);
+                    g.setClip(previous);
+                    g.setColor(CYAN);g.draw(frame);
+                    g.setColor(MUTED);g.setFont(new Font("Segoe UI",Font.BOLD,10));g.drawString("Вы",px+8,py+15);
+                }
+                g.setColor(LINE);g.draw(area);
+            }
+            g.dispose();
+        }
+    }
     private static final class FileBadge extends JLabel {
         private final Color tint;
         FileBadge(String value,Color tint){super(value,SwingConstants.CENTER);this.tint=tint;setForeground(tint);setFont(new Font("Segoe UI",Font.BOLD,10));setOpaque(false);}
-        protected void paintComponent(Graphics raw){Graphics2D g=(Graphics2D)raw.create();g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);int w=getWidth(),h=getHeight();if(w>0&&h>0){g.setColor(new Color(tint.getRed(),tint.getGreen(),tint.getBlue(),38));g.fillRoundRect(0,0,w,h,14,14);g.setColor(new Color(tint.getRed(),tint.getGreen(),tint.getBlue(),96));g.drawRoundRect(0,0,w-1,h-1,14,14);}g.dispose();super.paintComponent(raw);}
+        protected void paintComponent(Graphics raw){Graphics2D g=(Graphics2D)raw.create();g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);int w=getWidth(),h=getHeight();if(w>0&&h>0){g.setColor(new Color(tint.getRed(),tint.getGreen(),tint.getBlue(),38));g.fillRoundRect(0,0,w,h,16,16);g.setColor(new Color(tint.getRed(),tint.getGreen(),tint.getBlue(),96));g.drawRoundRect(0,0,w-1,h-1,16,16);}g.dispose();super.paintComponent(raw);}
     }
     public Dimension getPreferredScrollableViewportSize(){return new Dimension(480,600);}
     public int getScrollableUnitIncrement(Rectangle r,int orientation,int direction){return 24;}
     public int getScrollableBlockIncrement(Rectangle r,int orientation,int direction){return 200;}
     public boolean getScrollableTracksViewportWidth(){return true;}
     public boolean getScrollableTracksViewportHeight(){return true;}
-    @Override public void close(){if(closed)return;closed=true;CallSession activeCall=callSession;callSession=null;callOffer="";callCallId="";if(activeCall!=null)activeCall.close();VoiceRecorder active=recorder;recorder=null;if(active!=null)active.stop();stopPlayback();worker.shutdownNow();}
+    @Override public void close(){if(closed)return;closed=true;videoCallMode=false;pendingRemoteFrame.set(null);pendingLocalFrame.set(null);callVideo.clear();CallSession activeCall=callSession;callSession=null;callOffer="";callCallId="";if(activeCall!=null)activeCall.close();VoiceRecorder active=recorder;recorder=null;if(active!=null)active.stop();stopPlayback();worker.shutdownNow();}
 }

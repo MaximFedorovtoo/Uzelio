@@ -25,6 +25,9 @@ import org.uzel.messenger.chat.ChatInvite;
 import org.uzel.messenger.chat.ChatRepository;
 import org.uzel.messenger.chat.ChatWire;
 import org.uzel.messenger.chat.LocalAddress;
+import org.webrtc.EglBase;
+import org.webrtc.RendererCommon;
+import org.webrtc.SurfaceViewRenderer;
 import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -46,16 +49,27 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
     private final TextView status,heading,activeAvatar;
     private final Button invitationButton;
     private final Button send,retry,attach,voice;
-    private final Button callButton,callAccept,callReject,callEnd;
-    private final TextView callState;
+    private final Button callButton,videoButton,callAccept,callReject,callSwitch,callEnd;
+    private final TextView callState,callHint;
     private final LinearLayout callPanel,callActions;
+    private final FrameLayout callVideoStage;
     private final AndroidMessenger.CallHandler callHandler=this::onCallFrame;
+    private final CallSession.Listener callListener=new CallSession.Listener(){
+        @Override public void onCallState(CallSession session,CallSession.State state){MessengerScreen.this.onCallState(session,state);}
+        @Override public void onCallVideo(CallSession session,boolean sending,String notice){MessengerScreen.this.onCallVideo(session,sending,notice);}
+    };
     private CallSession call;
+    private SurfaceViewRenderer localVideo,remoteVideo;
+    private EglBase videoEgl;
+    private CallSession videoSession;
+    private boolean videoUnavailable;
     private boolean pendingCallAccept;
     private String pendingCallContact="";
+    private boolean pendingCallVideo;
     public static final int REQUEST_FILE=73;
     public static final int REQUEST_AUDIO=74;
     public static final int REQUEST_CALL_AUDIO=75;
+    public static final int REQUEST_CALL_VIDEO=76;
     private final Runnable hideFailedCall=()->{
         if(call!=null&&call.state()==CallSession.State.FAILED){call.close();call=null;renderCall();updateComposer();}
     };
@@ -79,13 +93,15 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
         listTools=column();LinearLayout actions=row();TextView sectionTitle=text(R.string.chat_title,24,TEXT);sectionTitle.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));sectionTitle.setLetterSpacing(-0.02f);actions.addView(sectionTitle,new LayoutParams(0,-2,1));Button add=button(R.string.chat_add,()->addContact()),invite=button(R.string.chat_invite,()->invitation());add.setText("+");add.setTextSize(22);add.setContentDescription(getResources().getString(R.string.chat_add));add.setBackground(circleSurface(true));actions.addView(add,new LayoutParams(dp(48),dp(48)));listTools.addView(actions);invitationButton=invite;
         status=text(R.string.chat_loading,12,MUTED);status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);addView(status);retry=button(R.string.chat_retry,()->{if(service==null){AndroidMessenger.chats(activity);refresh();}else work(()->service.retryNow());});addView(retry);retry.setVisibility(GONE);
         list=column();search=input(R.string.chat_search);search.setSingleLine(true);search.setBackground(fieldPill());search.setPadding(dp(16),dp(10),dp(16),dp(10));listTools.addView(search);list.addView(listTools);contactScroll=new ScrollView(activity);contactScroll.setFillViewport(true);contactScroll.addView(list);addView(contactScroll,new LayoutParams(-1,0,1));
-        thread=column();LinearLayout title=row();title.setPadding(0,0,0,dp(4));Button back=button(R.string.chat_back,()->backToContacts());back.setText("‹");back.setTextSize(26);back.setContentDescription(getResources().getString(R.string.chat_back));back.setBackground(circleSurface(false));title.addView(back,new LayoutParams(dp(44),dp(44)));activeAvatar=new TextView(activity);activeAvatar.setTextColor(ACCENT);activeAvatar.setTextSize(15);activeAvatar.setGravity(Gravity.CENTER);activeAvatar.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));activeAvatar.setBackground(avatarBackground(ACCENT));LayoutParams avatarSize=new LayoutParams(dp(38),dp(38));avatarSize.setMarginEnd(dp(10));title.addView(activeAvatar,avatarSize);heading=text(R.string.chat_select,18,TEXT);heading.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));title.addView(heading,new LayoutParams(0,-2,1));callButton=button("Позвонить",this::startCall);callButton.setTextSize(12);callButton.setPadding(dp(10),0,dp(10),0);callButton.setBackground(tintPill(MINT));callButton.setTextColor(MINT);LayoutParams callButtonParams=new LayoutParams(-2,dp(44));callButtonParams.setMarginStart(dp(4));title.addView(callButton,callButtonParams);thread.addView(title);
+        thread=column();LinearLayout title=row();title.setPadding(0,0,0,dp(4));Button back=button(R.string.chat_back,()->backToContacts());back.setText("‹");back.setTextSize(26);back.setContentDescription(getResources().getString(R.string.chat_back));back.setBackground(circleSurface(false));title.addView(back,new LayoutParams(dp(44),dp(44)));activeAvatar=new TextView(activity);activeAvatar.setTextColor(ACCENT);activeAvatar.setTextSize(15);activeAvatar.setGravity(Gravity.CENTER);activeAvatar.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));activeAvatar.setBackground(avatarBackground(ACCENT));LayoutParams avatarSize=new LayoutParams(dp(38),dp(38));avatarSize.setMarginEnd(dp(10));title.addView(activeAvatar,avatarSize);heading=text(R.string.chat_select,18,TEXT);heading.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));title.addView(heading,new LayoutParams(0,-2,1));callButton=button("Позвонить",this::startCall);callButton.setTextSize(12);callButton.setPadding(dp(10),0,dp(10),0);callButton.setBackground(tintPill(MINT));callButton.setTextColor(MINT);LayoutParams callButtonParams=new LayoutParams(-2,dp(44));callButtonParams.setMarginStart(dp(4));title.addView(callButton,callButtonParams);
+        videoButton=button("Видео",this::startVideoCall);videoButton.setTextSize(12);videoButton.setPadding(dp(10),0,dp(10),0);videoButton.setBackground(tintPill(IRIS));videoButton.setTextColor(IRIS);videoButton.setContentDescription("Видеозвонок");LayoutParams videoButtonParams=new LayoutParams(-2,dp(44));videoButtonParams.setMarginStart(dp(4));title.addView(videoButton,videoButtonParams);thread.addView(title);
         LinearLayout privateRow=row();privateRow.setPadding(dp(2),0,0,dp(6));View privateDot=led(MINT);LayoutParams privateDotParams=new LayoutParams(dp(6),dp(6));privateDotParams.setMarginEnd(dp(6));privateRow.addView(privateDot,privateDotParams);privateRow.addView(text(R.string.chat_private,11,MUTED2));thread.addView(privateRow);
         callPanel=column();callPanel.setPadding(dp(14),dp(10),dp(14),dp(10));callPanel.setBackground(glassCard(20));callPanel.setVisibility(GONE);
-        callState=text(R.string.chat_private,14,TEXT);callState.setText("");callActions=row();
-        callAccept=button("Принять",this::acceptCall);callAccept.setBackground(tintPill(MINT));callAccept.setTextColor(MINT);callReject=button("Отклонить",this::rejectCall);callReject.setBackground(tintPill(CORAL));callReject.setTextColor(CORAL);callEnd=button("Завершить",this::endCall);callEnd.setBackground(tintPill(RAISED));callEnd.setTextColor(TEXT);
-        callActions.addView(callAccept,callActionParams());callActions.addView(callReject,callActionParams());callActions.addView(callEnd,callActionParams());
-        callPanel.addView(callState);callPanel.addView(callActions);thread.addView(callPanel,new LayoutParams(-1,-2));
+        callState=text(R.string.chat_private,14,TEXT);callState.setText("");callHint=text(R.string.chat_private,12,MUTED);callHint.setText("");callHint.setVisibility(GONE);callActions=row();
+        callAccept=button("Принять",this::acceptCall);callAccept.setBackground(tintPill(MINT));callAccept.setTextColor(MINT);callReject=button("Отклонить",this::rejectCall);callReject.setBackground(tintPill(CORAL));callReject.setTextColor(CORAL);callSwitch=button("Сменить камеру",this::switchCamera);callSwitch.setBackground(tintPill(ACCENT));callSwitch.setTextColor(ACCENT);callEnd=button("Завершить",this::endCall);callEnd.setBackground(tintPill(RAISED));callEnd.setTextColor(TEXT);
+        callActions.addView(callAccept,callActionParams());callActions.addView(callReject,callActionParams());callActions.addView(callSwitch,callActionParams());callActions.addView(callEnd,callActionParams());
+        callVideoStage=new FrameLayout(activity);callVideoStage.setBackground(rounded(0xFF04101A,16,LINE));callVideoStage.setVisibility(GONE);
+        callPanel.addView(callVideoStage,new LayoutParams(-1,dp(220)));callPanel.addView(callState);callPanel.addView(callHint);callPanel.addView(callActions);thread.addView(callPanel,new LayoutParams(-1,-2));
         messages=column();messages.setPadding(0,dp(10),0,dp(6));ScrollView history=new ScrollView(activity);history.setFillViewport(true);history.setClipToPadding(false);history.addView(messages);thread.addView(history,new LayoutParams(-1,0,1));
         LinearLayout composer=row();composer.setGravity(Gravity.CENTER_VERTICAL);composer.setBackground(composerBackground());composer.setPadding(dp(4),dp(4),dp(4),dp(4));draft=input(R.string.chat_message);draft.setMinLines(1);draft.setMaxLines(4);draft.setBackground(null);draft.setPadding(dp(10),dp(8),dp(10),dp(8));composer.addView(draft,new LayoutParams(0,-2,1));
         attach=button(R.string.chat_attach,this::pickFile);attach.setText("📎");attach.setTextSize(18);attach.setContentDescription(getResources().getString(R.string.chat_attach));attach.setBackground(circleSurface(false));LayoutParams attachParams=new LayoutParams(dp(44),dp(44));attachParams.setMarginStart(dp(2));composer.addView(attach,attachParams);
@@ -141,7 +157,7 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
         }
     }
     private void send(){if(closed)return;String value=draft.getText().toString().trim(),id=selected;if(value.isEmpty()||service==null||id.isEmpty())return;send.setEnabled(false);submit(()->{try{service.send(id,value);postUi(()->{if(selected.equals(id)&&draft.getText().toString().trim().equals(value)){draft.setText("");drafts.put(id,"");}else if(drafts.getOrDefault(id,"").trim().equals(value))drafts.put(id,"");signature="";refresh();});}catch(Exception e){postUi(()->{status.setVisibility(VISIBLE);status.setText(R.string.chat_error);retry.setVisibility(VISIBLE);send.setEnabled(true);});}});}
-    private void updateComposer(){boolean ready=service!=null&&!selected.isEmpty();boolean inCall=call!=null&&call.isActive();attach.setEnabled(ready&&recorder==null&&!inCall);voice.setEnabled((ready||recorder!=null)&&!inCall);callButton.setEnabled(service!=null&&!selected.isEmpty()&&recorder==null&&!inCall);}
+    private void updateComposer(){boolean ready=service!=null&&!selected.isEmpty();boolean inCall=call!=null&&call.isActive();attach.setEnabled(ready&&recorder==null&&!inCall);voice.setEnabled((ready||recorder!=null)&&!inCall);callButton.setEnabled(service!=null&&!selected.isEmpty()&&recorder==null&&!inCall);videoButton.setEnabled(service!=null&&!selected.isEmpty()&&recorder==null&&!inCall);}
     private void pickFile(){if(closed||recorder!=null||service==null||selected.isEmpty())return;attachmentContact=selected;Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("*/*");intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);try{activity.startActivityForResult(intent,REQUEST_FILE);}catch(Exception e){attachmentContact="";fail(R.string.chat_file_unreadable);}}
     public void onActivityResult(int request,int result,Intent data){if(request!=REQUEST_FILE)return;String contact=attachmentContact;attachmentContact="";if(result!=Activity.RESULT_OK||data==null||data.getData()==null||closed)return;String target=contact.isEmpty()?selected:contact;if(target.isEmpty())return;sendPicked(data.getData(),target);}
     private void sendPicked(Uri uri,String contact){
@@ -261,16 +277,25 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
         startRecording();
     }
     public void onRequestPermissionsResult(int request,String[] permissions,int[] grantResults){
-        if(request==REQUEST_CALL_AUDIO){
-            boolean granted=grantResults!=null&&grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED;
+        if(request==REQUEST_CALL_AUDIO||request==REQUEST_CALL_VIDEO){
+            boolean videoRequest=request==REQUEST_CALL_VIDEO;
+            boolean audio=activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED;
+            boolean camera=activity.checkSelfPermission(Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED;
             boolean accept=pendingCallAccept;pendingCallAccept=false;String contact=pendingCallContact;pendingCallContact="";
-            if(granted){
-                if(accept&&call!=null&&call.state()==CallSession.State.RINGING){call.accept();renderCall();updateComposer();}
-                else if(!contact.isEmpty())beginCall(contact);
-            }else{
+            boolean wantsVideo=pendingCallVideo||videoRequest;pendingCallVideo=false;
+            if(!audio){
                 if(call!=null&&call.state()==CallSession.State.RINGING)call.reject();
                 failText("Для звонка нужен доступ к микрофону.");
+                return;
             }
+            if(accept&&call!=null&&call.state()==CallSession.State.RINGING){
+                if(call.isVideo()&&!camera)failText("Нет доступа к камере — звонок продолжится со звуком.");
+                call.accept();renderCall();updateComposer();
+                return;
+            }
+            if(contact.isEmpty())return;
+            if(wantsVideo&&!camera){failText("Для видеозвонка нужен доступ к камере. Аудиозвонок доступен.");return;}
+            beginCall(contact,wantsVideo&&camera);
             return;
         }
         if(request!=REQUEST_AUDIO)return;
@@ -331,30 +356,59 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
         if(call!=null&&call.isActive())return;
         if(recorder!=null)finishRecording(false);
         if(activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
-            pendingCallContact=selected;pendingCallAccept=false;
+            pendingCallContact=selected;pendingCallAccept=false;pendingCallVideo=false;
             activity.requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},REQUEST_CALL_AUDIO);
             return;
         }
-        beginCall(selected);
+        beginCall(selected,false);
     }
-    private void beginCall(String contact){
+    private void startVideoCall(){
+        if(closed||service==null||selected.isEmpty())return;
+        if(call!=null&&call.isActive())return;
+        if(recorder!=null)finishRecording(false);
+        boolean audio=activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED;
+        boolean camera=activity.checkSelfPermission(Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED;
+        if(!audio||!camera){
+            pendingCallContact=selected;pendingCallAccept=false;pendingCallVideo=true;
+            ArrayList<String> missing=new ArrayList<>();
+            if(!audio)missing.add(Manifest.permission.RECORD_AUDIO);
+            if(!camera)missing.add(Manifest.permission.CAMERA);
+            activity.requestPermissions(missing.toArray(new String[0]),REQUEST_CALL_VIDEO);
+            return;
+        }
+        beginCall(selected,true);
+    }
+    private void beginCall(String contact,boolean video){
         if(closed||service==null||contact==null||contact.isEmpty())return;
         if(call!=null){call.close();call=null;}
         handler.removeCallbacks(hideFailedCall);
-        CallSession session=new CallSession(activity.getApplicationContext(),service,this::onCallState);
-        call=session;renderCall();updateComposer();
-        try{session.start(contact);}
-        catch(RuntimeException failure){session.close();call=null;renderCall();updateComposer();failText("Не удалось начать звонок.");}
+        videoUnavailable=false;callHint.setText("");callHint.setVisibility(GONE);
+        CallSession session=new CallSession(activity.getApplicationContext(),service,callListener);
+        call=session;
+        try{if(video)session.startVideo(contact);else session.start(contact);}
+        catch(RuntimeException failure){session.close();call=null;renderCall();updateComposer();failText("Не удалось начать звонок.");return;}
+        renderCall();updateComposer();
     }
     private void acceptCall(){
         CallSession session=call;
         if(closed||session==null||session.state()!=CallSession.State.RINGING)return;
-        if(activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
-            pendingCallAccept=true;
-            activity.requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},REQUEST_CALL_AUDIO);
+        boolean audio=activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED;
+        boolean video=session.isVideo();
+        boolean camera=activity.checkSelfPermission(Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED;
+        if(!audio||(video&&!camera)){
+            pendingCallAccept=true;pendingCallContact="";pendingCallVideo=video;
+            ArrayList<String> missing=new ArrayList<>();
+            if(!audio)missing.add(Manifest.permission.RECORD_AUDIO);
+            if(video&&!camera)missing.add(Manifest.permission.CAMERA);
+            activity.requestPermissions(missing.toArray(new String[0]),video?REQUEST_CALL_VIDEO:REQUEST_CALL_AUDIO);
             return;
         }
         session.accept();renderCall();updateComposer();
+    }
+    private void switchCamera(){
+        CallSession session=call;
+        if(closed||session==null||!session.isSendingVideo())return;
+        session.switchCamera();
     }
     private void rejectCall(){CallSession session=call;if(session!=null)session.reject();}
     private void endCall(){
@@ -383,10 +437,12 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
         handler.removeCallbacks(hideFailedCall);
         if(recorder!=null)finishRecording(false);
         selected=contactId;String name=contactName(contactId);heading.setText(name);activeAvatar.setText(initials(name));signature="";showConversation();refresh();
-        CallSession session=new CallSession(activity.getApplicationContext(),service,this::onCallState);
+        videoUnavailable=false;callHint.setText("");callHint.setVisibility(GONE);
+        CallSession session=new CallSession(activity.getApplicationContext(),service,callListener);
         call=session;renderCall();updateComposer();
         try{session.incoming(contactId,callId,sdp);}
         catch(RuntimeException failure){session.close();call=null;renderCall();updateComposer();}
+        renderCall();
     }
     private String contactName(String id){for(var c:contacts)if(c.id().equals(id))return c.name();return "Uzelio";}
     private void rejectBusy(String contactId,String callId){
@@ -395,29 +451,91 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
     private void onCallState(CallSession session,CallSession.State state){
         if(closed||session!=call)return;
         handler.removeCallbacks(hideFailedCall);
-        if(state==CallSession.State.ENDED)call=null;
+        if(state==CallSession.State.ENDED){call=null;videoUnavailable=false;}
         renderCall();updateComposer();
         if(state==CallSession.State.FAILED)handler.postDelayed(hideFailedCall,6000);
     }
+    private void onCallVideo(CallSession session,boolean sending,String notice){
+        if(closed||session!=call)return;
+        if(notice!=null&&!notice.isEmpty()){callHint.setText(notice);callHint.setVisibility(VISIBLE);}
+        if(sending){
+            if(notice==null||notice.isEmpty()){callHint.setText("");callHint.setVisibility(GONE);}
+        }else{
+            videoUnavailable=true;
+            releaseVideoUi();
+        }
+        renderCall();
+    }
     private void renderCall(){
         CallSession session=call;
-        if(session==null||session.state()==CallSession.State.ENDED){
-            callPanel.setVisibility(GONE);callAccept.setVisibility(GONE);callReject.setVisibility(GONE);callEnd.setVisibility(GONE);return;
-        }
+        if(session==null||session.state()==CallSession.State.ENDED){hideCallPanel();return;}
+        boolean video=session.isVideo()&&!videoUnavailable&&session.state()!=CallSession.State.FAILED;
+        if(video)ensureVideoUi(session);else releaseVideoUi();
         CallSession.State state=session.state();
         boolean entering=callPanel.getVisibility()!=VISIBLE;
-        callPanel.setVisibility(VISIBLE);callAccept.setVisibility(GONE);callReject.setVisibility(GONE);callEnd.setVisibility(GONE);
+        callPanel.setVisibility(VISIBLE);callAccept.setVisibility(GONE);callReject.setVisibility(GONE);callSwitch.setVisibility(GONE);callEnd.setVisibility(GONE);
+        callVideoStage.setVisibility(video?VISIBLE:GONE);
+        callSwitch.setVisibility(video&&session.isSendingVideo()?VISIBLE:GONE);
         if(entering)reveal(callPanel);
         if(state==CallSession.State.CALLING){
-            callState.setText("Звоним…");callEnd.setText("Завершить");callEnd.setVisibility(VISIBLE);
+            callState.setText(video?"Видеозвонок…":"Звоним…");callEnd.setText("Завершить");callEnd.setVisibility(VISIBLE);
         }else if(state==CallSession.State.RINGING){
-            if(session.isAccepted()){callState.setText("Соединение…");callEnd.setText("Завершить");callEnd.setVisibility(VISIBLE);}
-            else{callState.setText("Входящий звонок");callAccept.setVisibility(VISIBLE);callReject.setVisibility(VISIBLE);}
+            if(session.isAccepted()){callState.setText(video?"Видеосоединение…":"Соединение…");callEnd.setText("Завершить");callEnd.setVisibility(VISIBLE);}
+            else{callState.setText(video?"Входящий видеозвонок":"Входящий звонок");callAccept.setVisibility(VISIBLE);callReject.setVisibility(VISIBLE);}
         }else if(state==CallSession.State.CONNECTED){
-            callState.setText("В сети");callEnd.setText("Завершить");callEnd.setVisibility(VISIBLE);
+            callState.setText(video?"Видео в сети":"В сети");callEnd.setText("Завершить");callEnd.setVisibility(VISIBLE);
         }else if(state==CallSession.State.FAILED){
             callState.setText("Не удалось");callEnd.setText("Скрыть");callEnd.setVisibility(VISIBLE);
         }else callPanel.setVisibility(GONE);
+    }
+    private void hideCallPanel(){
+        callPanel.setVisibility(GONE);callAccept.setVisibility(GONE);callReject.setVisibility(GONE);callSwitch.setVisibility(GONE);callEnd.setVisibility(GONE);
+        callVideoStage.setVisibility(GONE);releaseVideoUi();
+    }
+    private void ensureVideoUi(CallSession session){
+        if(session==null)return;
+        if(videoSession==session&&localVideo!=null&&remoteVideo!=null)return;
+        releaseVideoUi();
+        SurfaceViewRenderer remote=null,local=null;
+        EglBase egl=null;
+        try{
+            egl=EglBase.create();
+            remote=new SurfaceViewRenderer(activity);
+            remote.init(egl.getEglBaseContext(),null);
+            remote.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL);
+            remote.setEnableHardwareScaler(true);
+            remote.setMirror(false);
+            local=new SurfaceViewRenderer(activity);
+            local.init(egl.getEglBaseContext(),null);
+            local.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL);
+            local.setEnableHardwareScaler(true);
+            local.setMirror(true);
+            local.setZOrderMediaOverlay(true);
+            callVideoStage.addView(remote,new FrameLayout.LayoutParams(-1,-1));
+            FrameLayout.LayoutParams preview=new FrameLayout.LayoutParams(dp(84),dp(112),Gravity.TOP|Gravity.END);
+            preview.setMargins(0,dp(8),dp(8),0);
+            callVideoStage.addView(local,preview);
+            videoEgl=egl;remoteVideo=remote;localVideo=local;videoSession=session;
+            session.attachVideoSinks(local,remote);
+        }catch(RuntimeException|LinkageError failure){
+            if(local!=null)try{local.release();}catch(RuntimeException ignored){}
+            if(remote!=null)try{remote.release();}catch(RuntimeException ignored){}
+            if(egl!=null)try{egl.release();}catch(RuntimeException ignored){}
+            callVideoStage.removeAllViews();
+            videoUnavailable=true;
+            callHint.setText("Видео недоступно — звонок со звуком.");callHint.setVisibility(VISIBLE);
+        }
+    }
+    private void releaseVideoUi(){
+        CallSession session=videoSession;videoSession=null;
+        if(session!=null)try{session.attachVideoSinks(null,null);}catch(RuntimeException ignored){}
+        callVideoStage.removeAllViews();
+        SurfaceViewRenderer remote=remoteVideo;remoteVideo=null;
+        SurfaceViewRenderer local=localVideo;localVideo=null;
+        if(remote!=null)try{remote.release();}catch(RuntimeException ignored){}
+        if(local!=null)try{local.release();}catch(RuntimeException ignored){}
+        EglBase egl=videoEgl;videoEgl=null;
+        if(egl!=null)try{egl.release();}catch(RuntimeException ignored){}
     }
     private LayoutParams callActionParams(){LayoutParams params=new LayoutParams(-2,dp(44));params.setMarginEnd(dp(8));return params;}
     private void failText(String message){if(closed)return;status.setVisibility(VISIBLE);status.setText(message);Toast.makeText(activity,message,Toast.LENGTH_LONG).show();}
@@ -459,5 +577,5 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
     private GradientDrawable sendCircle(){GradientDrawable d=new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{0xFF8BFBD4,ACCENT,ACCENT_DEEP});d.setCornerRadius(dp(999));return d;}
     private GradientDrawable privacyCard(){return rounded(withAlpha(MINT,0x0B),16,withAlpha(MINT,0x33));}
     private GradientDrawable dot(int tone){GradientDrawable d=new GradientDrawable();d.setShape(GradientDrawable.OVAL);d.setColor(tone);return d;}
-    @Override public void close(){closed=true;AndroidMessenger.clearCallHandler(callHandler);handler.removeCallbacks(hideFailedCall);CallSession active=call;call=null;if(active!=null)active.close();handler.removeCallbacks(voiceWatchdog);MediaRecorder current=recorder;recorder=null;if(current!=null){try{current.stop();}catch(RuntimeException ignored){}try{current.release();}catch(RuntimeException ignored){}}voiceContact="";attachmentContact="";if(voiceFile!=null){voiceFile.delete();voiceFile=null;}stopPlayback();handler.removeCallbacksAndMessages(null);worker.shutdownNow();}
+    @Override public void close(){closed=true;AndroidMessenger.clearCallHandler(callHandler);handler.removeCallbacks(hideFailedCall);CallSession active=call;call=null;releaseVideoUi();if(active!=null)active.close();handler.removeCallbacks(voiceWatchdog);MediaRecorder current=recorder;recorder=null;if(current!=null){try{current.stop();}catch(RuntimeException ignored){}try{current.release();}catch(RuntimeException ignored){}}voiceContact="";attachmentContact="";if(voiceFile!=null){voiceFile.delete();voiceFile=null;}stopPlayback();handler.removeCallbacksAndMessages(null);worker.shutdownNow();}
 }

@@ -1,6 +1,8 @@
 package org.uzel.app.messenger;
 
+import android.Manifest;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
@@ -39,7 +41,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class CallSession implements AutoCloseable {
     public enum State {IDLE,CALLING,RINGING,CONNECTED,ENDED,FAILED}
-    public interface Listener {void onCallState(CallSession session,State state);}
+    public interface Listener {
+        void onCallState(CallSession session,State state);
+        /** Local video became available or failed; {@code notice} is a user-facing hint, never media data. */
+        default void onCallVideo(CallSession session,boolean sending,String notice){}
+    }
 
     private static final long RING_TIMEOUT_MS=60_000,CONNECT_TIMEOUT_MS=30_000,GATHER_TIMEOUT_MS=12_000;
     private static final int MAX_SDP=65_536;
@@ -71,6 +77,23 @@ public final class CallSession implements AutoCloseable {
     private AudioManager audioManager;
     private AudioFocusRequest audioFocusRequest;
     private int previousAudioMode=AudioManager.MODE_NORMAL;
+    private EglBase videoEgl;
+    private SurfaceTextureHelper surfaceTextureHelper;
+    private VideoCapturer capturer;
+    private VideoSource videoSource;
+    private VideoTrack localVideoTrack;
+    private RtpSender videoSender;
+    private VideoTrack remoteVideoTrack;
+    private VideoSink localVideoSink,remoteVideoSink;
+    private boolean videoRequested,videoActive;
+    private final CameraVideoCapturer.CameraEventsHandler cameraEvents=new CameraVideoCapturer.CameraEventsHandler(){
+        @Override public void onCameraError(String error){notifyVideo(true,"Камера недоступна — вас не видно.");}
+        @Override public void onCameraDisconnected(){notifyVideo(true,"Камера отключена.");}
+        @Override public void onCameraFreezed(String error){notifyVideo(true,"Камера приостановлена.");}
+        @Override public void onCameraOpening(String name){}
+        @Override public void onFirstFrameAvailable(){}
+        @Override public void onCameraClosed(){}
+    };
     private final Runnable timeout=()->{
         State current=state();
         if(current==State.CALLING||current==State.RINGING)terminate(State.FAILED,true);
@@ -89,6 +112,10 @@ public final class CallSession implements AutoCloseable {
     public String contactId(){synchronized(lock){return contactId;}}
     public boolean isOfferer(){synchronized(lock){return offerer;}}
     public boolean isAccepted(){synchronized(lock){return accepted;}}
+    /** True when this call carries video (outgoing request or an incoming offer with an m=video line). */
+    public boolean isVideo(){synchronized(lock){return videoRequested;}}
+    /** True once the local camera track was actually added to the peer connection. */
+    public boolean isSendingVideo(){synchronized(lock){return videoActive;}}
     public boolean isActive(){
         State current=state();
         return current==State.CALLING||current==State.RINGING||current==State.CONNECTED;
@@ -106,6 +133,56 @@ public final class CallSession implements AutoCloseable {
         submit(this::prepareOutgoing);
     }
 
+    /**
+     * Outgoing video call. Camera capture is attached before the offer is created;
+     * if the camera or its permission is unavailable the call falls back to audio.
+     */
+    public void startVideo(String contactId){
+        if(closed.get())throw new IllegalStateException("Call is closed");
+        if(contactId==null||contactId.isBlank())throw new IllegalArgumentException("Call contact");
+        synchronized(lock){
+            if(state!=State.IDLE)throw new IllegalStateException("Call already started");
+            this.contactId=contactId;this.callId=UUID.randomUUID().toString();this.offerer=true;this.videoRequested=true;
+        }
+        transition(State.CALLING);scheduleTimeout();
+        submit(this::prepareOutgoing);
+    }
+
+    /** UI renderers for the local preview and the remote stream; safe to call before media arrives. */
+    public void attachVideoSinks(VideoSink local,VideoSink remote){
+        if(closed.get()||disposed.get())return;
+        synchronized(lock){
+            if(localVideoSink!=local){
+                VideoTrack track=localVideoTrack;
+                if(track!=null&&localVideoSink!=null)try{track.removeSink(localVideoSink);}catch(RuntimeException ignored){}
+                localVideoSink=local;
+                if(track!=null&&local!=null)try{track.addSink(local);}catch(RuntimeException ignored){}
+            }
+            if(remoteVideoSink!=remote){
+                VideoTrack track=remoteVideoTrack;
+                if(track!=null&&remoteVideoSink!=null)try{track.removeSink(remoteVideoSink);}catch(RuntimeException ignored){}
+                remoteVideoSink=remote;
+                if(track!=null&&remote!=null)try{track.addSink(remote);}catch(RuntimeException ignored){}
+            }
+        }
+    }
+
+    /** Switch between the front and the back camera; a no-op when no camera is capturing. */
+    public void switchCamera(){
+        if(closed.get())return;
+        submit(()->{
+            VideoCapturer current;
+            synchronized(lock){current=capturer;}
+            if(!(current instanceof CameraVideoCapturer))return;
+            try{
+                ((CameraVideoCapturer)current).switchCamera(new CameraVideoCapturer.CameraSwitchHandler(){
+                    @Override public void onCameraSwitchDone(boolean front){}
+                    @Override public void onCameraSwitchError(String error){notifyVideo(true,"Не удалось переключить камеру.");}
+                });
+            }catch(RuntimeException|LinkageError ignored){/* The current camera keeps streaming. */}
+        });
+    }
+
     /** Incoming offer from the chat channel. It stays RINGING until the user decides. */
     public void incoming(String contactId,String callId,String sdp){
         if(closed.get())throw new IllegalStateException("Call is closed");
@@ -113,6 +190,7 @@ public final class CallSession implements AutoCloseable {
         synchronized(lock){
             if(state!=State.IDLE)throw new IllegalStateException("Call already started");
             this.contactId=contactId;this.callId=callId;this.offerer=false;this.accepted=false;this.pendingOffer=sdp;
+            this.videoRequested=offersVideo(sdp);
         }
         transition(State.RINGING);scheduleTimeout();
         // Native setup starts only on accept: ringing must not allocate a microphone session.
@@ -130,7 +208,7 @@ public final class CallSession implements AutoCloseable {
             scheduleTimeout(CONNECT_TIMEOUT_MS);
             notifyState(State.RINGING);
             if(peer==null)prepareIncoming();
-            else if(remoteDescriptionSet)createAnswer();
+            else if(remoteDescriptionSet){if(videoRequested)startVideoCapture();createAnswer();}
         });
     }
 
@@ -198,6 +276,7 @@ public final class CallSession implements AutoCloseable {
         try{
             createPeerConnection();
             attachAudio();
+            if(videoRequested)startVideoCapture();
             acquireAudioFocus();
             peer.createOffer(new SdpAdapter(){
                 @Override public void onCreateSuccess(SessionDescription description){submit(()->setLocalDescription(description));}
@@ -215,7 +294,7 @@ public final class CallSession implements AutoCloseable {
             peer.setRemoteDescription(new SdpAdapter(){
                 @Override public void onSetSuccess(){submit(()->{
                     remoteDescriptionSet=true;
-                    if(accepted)createAnswer();
+                    if(accepted){if(videoRequested)startVideoCapture();createAnswer();}
                 });}
                 @Override public void onSetFailure(String error){submit(CallSession.this::fail);}
             },new SessionDescription(SessionDescription.Type.OFFER,offer));
@@ -312,6 +391,135 @@ public final class CallSession implements AutoCloseable {
             throw new IllegalStateException("Audio sender");
         }
         audioSender=sender;
+    }
+
+    /**
+     * Add the local camera track. Any failure is reported to the UI and leaves the
+     * audio call running: a video call must never take the audio leg down with it.
+     */
+    private boolean startVideoCapture(){
+        if(disposed.get()||!videoRequested)return false;
+        synchronized(lock){if(videoActive)return true;}
+        if(app.checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){
+            notifyVideo(false,"Нет доступа к камере — звонок продолжится со звуком.");
+            return false;
+        }
+        VideoCapturer createdCapturer=null;
+        EglBase egl=null;
+        SurfaceTextureHelper helper=null;
+        VideoSource source=null;
+        VideoTrack track=null;
+        RtpSender sender=null;
+        try{
+            createdCapturer=createCameraCapturer();
+            if(createdCapturer==null){
+                notifyVideo(false,"Камера не найдена — звонок продолжится со звуком.");
+                return false;
+            }
+            egl=EglBase.create();
+            helper=SurfaceTextureHelper.create("uzelio-camera",egl.getEglBaseContext());
+            PeerConnectionFactory created=factory;
+            PeerConnection connection=peer;
+            if(created==null||connection==null||helper==null)throw new IllegalStateException("Video is not ready");
+            source=created.createVideoSource(false);
+            if(source==null)throw new IllegalStateException("Video source");
+            track=created.createVideoTrack("uzelio.video",source);
+            if(track==null)throw new IllegalStateException("Video track");
+            createdCapturer.initialize(helper,app,source.getCapturerObserver());
+            createdCapturer.startCapture(640,480,30);
+            sender=attachVideoSender(connection,track);
+            if(sender==null)throw new IllegalStateException("Video sender");
+            synchronized(lock){
+                videoEgl=egl;surfaceTextureHelper=helper;capturer=createdCapturer;
+                videoSource=source;localVideoTrack=track;videoSender=sender;videoActive=true;
+                if(localVideoSink!=null)try{track.addSink(localVideoSink);}catch(RuntimeException ignored){}
+            }
+            notifyVideo(true,null);
+            return true;
+        }catch(RuntimeException|LinkageError failure){
+            if(sender!=null)try{sender.dispose();}catch(RuntimeException ignored){}
+            if(track!=null)try{track.dispose();}catch(RuntimeException ignored){}
+            if(source!=null)try{source.dispose();}catch(RuntimeException ignored){}
+            if(createdCapturer!=null)try{createdCapturer.dispose();}catch(RuntimeException ignored){}
+            if(helper!=null)try{helper.dispose();}catch(RuntimeException ignored){}
+            if(egl!=null)try{egl.release();}catch(RuntimeException ignored){}
+            notifyVideo(false,"Камера занята или недоступна — звонок продолжится со звуком.");
+            return false;
+        }
+    }
+
+    /**
+     * Answering side: reuse the video transceiver created by the remote offer so the
+     * answer keeps one video m-line instead of inventing an unnegotiable extra one.
+     */
+    private RtpSender attachVideoSender(PeerConnection connection,VideoTrack track){
+        if(!offerer){
+            try{
+                for(RtpTransceiver transceiver:connection.getTransceivers()){
+                    if(transceiver==null||transceiver.isStopped()
+                            ||transceiver.getMediaType()!=MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO)continue;
+                    RtpSender existing=transceiver.getSender();
+                    if(existing==null||existing.track()!=null)continue;
+                    if(existing.setTrack(track,true))return existing;
+                }
+            }catch(RuntimeException ignored){/* Fall through to addTrack. */}
+        }
+        return connection.addTrack(track,Collections.singletonList("uzelio.call"));
+    }
+
+    private VideoCapturer createCameraCapturer(){
+        CameraEnumerator primary;
+        try{primary=Camera2Enumerator.isSupported(app)?new Camera2Enumerator(app):new Camera1Enumerator(true);}
+        catch(RuntimeException|LinkageError unsupported){primary=new Camera1Enumerator(true);}
+        VideoCapturer candidate=findCamera(primary);
+        if(candidate!=null)return candidate;
+        if(primary instanceof Camera1Enumerator)return null;
+        return findCamera(new Camera1Enumerator(true));
+    }
+
+    private VideoCapturer findCamera(CameraEnumerator enumerator){
+        String[] names;
+        try{names=enumerator.getDeviceNames();}catch(RuntimeException|LinkageError unavailable){return null;}
+        if(names==null)return null;
+        for(String name:names){
+            boolean front;
+            try{front=enumerator.isFrontFacing(name);}catch(RuntimeException ignored){front=false;}
+            if(!front)continue;
+            CameraVideoCapturer candidate;
+            try{candidate=enumerator.createCapturer(name,cameraEvents);}catch(RuntimeException|LinkageError ignored){candidate=null;}
+            if(candidate!=null)return candidate;
+        }
+        for(String name:names){
+            CameraVideoCapturer candidate;
+            try{candidate=enumerator.createCapturer(name,cameraEvents);}catch(RuntimeException|LinkageError ignored){candidate=null;}
+            if(candidate!=null)return candidate;
+        }
+        return null;
+    }
+
+    private void attachRemoteVideo(VideoTrack track){
+        if(track==null||disposed.get())return;
+        synchronized(lock){
+            if(remoteVideoTrack==track)return;
+            VideoTrack previous=remoteVideoTrack;
+            if(previous!=null&&remoteVideoSink!=null)try{previous.removeSink(remoteVideoSink);}catch(RuntimeException ignored){}
+            remoteVideoTrack=track;
+            if(remoteVideoSink!=null)try{track.addSink(remoteVideoSink);}catch(RuntimeException ignored){}
+        }
+    }
+
+    private void notifyVideo(boolean sending,String notice){
+        Listener target=listener;
+        if(target==null)return;
+        main.post(()->{
+            try{target.onCallVideo(this,sending,notice);}catch(RuntimeException ignored){/* UI only */}
+        });
+    }
+
+    private static boolean offersVideo(String sdp){
+        if(sdp==null)return false;
+        for(String line:sdp.split("\r?\n"))if(line.startsWith("m=video"))return true;
+        return false;
     }
 
     private List<PeerConnection.IceServer> iceServers(){
@@ -463,13 +671,45 @@ public final class CallSession implements AutoCloseable {
         AudioSource source=audioSource;audioSource=null;
         PeerConnectionFactory created=factory;factory=null;
         JavaAudioDeviceModule module=audioDeviceModule;audioDeviceModule=null;
+        RtpSender outboundVideo;
+        VideoTrack localVideo,remoteVideo;
+        VideoSource videoInput;
+        VideoCapturer camera;
+        SurfaceTextureHelper helper;
+        EglBase egl;
+        VideoSink localSink,remoteSink;
+        synchronized(lock){
+            outboundVideo=videoSender;videoSender=null;
+            localVideo=localVideoTrack;localVideoTrack=null;
+            remoteVideo=remoteVideoTrack;remoteVideoTrack=null;
+            videoInput=videoSource;videoSource=null;
+            camera=capturer;capturer=null;
+            helper=surfaceTextureHelper;surfaceTextureHelper=null;
+            egl=videoEgl;videoEgl=null;
+            localSink=localVideoSink;localVideoSink=null;
+            remoteSink=remoteVideoSink;remoteVideoSink=null;
+            videoActive=false;videoRequested=false;
+        }
+        if(remoteVideo!=null&&remoteSink!=null)try{remoteVideo.removeSink(remoteSink);}catch(RuntimeException ignored){}
+        if(localVideo!=null&&localSink!=null)try{localVideo.removeSink(localSink);}catch(RuntimeException ignored){}
+        if(camera!=null){
+            try{camera.stopCapture();}
+            catch(InterruptedException interrupted){Thread.currentThread().interrupt();}
+            catch(RuntimeException ignored){}
+            try{camera.dispose();}catch(RuntimeException ignored){}
+        }
+        if(helper!=null)try{helper.dispose();}catch(RuntimeException ignored){}
         if(connection!=null)try{connection.close();}catch(RuntimeException ignored){}
         if(sender!=null)try{sender.dispose();}catch(RuntimeException ignored){}
         if(track!=null)try{track.dispose();}catch(RuntimeException ignored){}
         if(source!=null)try{source.dispose();}catch(RuntimeException ignored){}
+        if(outboundVideo!=null)try{outboundVideo.dispose();}catch(RuntimeException ignored){}
+        if(localVideo!=null)try{localVideo.dispose();}catch(RuntimeException ignored){}
+        if(videoInput!=null)try{videoInput.dispose();}catch(RuntimeException ignored){}
         if(connection!=null)try{connection.dispose();}catch(RuntimeException ignored){}
         if(created!=null)try{created.dispose();}catch(RuntimeException ignored){}
         if(module!=null)try{module.release();}catch(RuntimeException ignored){}
+        if(egl!=null)try{egl.release();}catch(RuntimeException ignored){/* Renderers own their own EGL context. */}
         synchronized(lock){pendingOffer=null;}
     }
 
@@ -529,6 +769,16 @@ public final class CallSession implements AutoCloseable {
         @Override public void onIceCandidatesRemoved(IceCandidate[] candidates){}
         @Override public void onAddStream(MediaStream stream){}
         @Override public void onRemoveStream(MediaStream stream){}
+        @Override public void onTrack(RtpTransceiver transceiver){
+            MediaStreamTrack media=null;
+            try{
+                RtpReceiver receiver=transceiver==null?null:transceiver.getReceiver();
+                media=receiver==null?null:receiver.track();
+            }catch(RuntimeException ignored){}
+            if(!(media instanceof VideoTrack))return;
+            VideoTrack video=(VideoTrack)media;
+            submit(()->attachRemoteVideo(video));
+        }
         @Override public void onDataChannel(DataChannel channel){}
         @Override public void onRenegotiationNeeded(){}
         @Override public void onConnectionChange(PeerConnection.PeerConnectionState value){
