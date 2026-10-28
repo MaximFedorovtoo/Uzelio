@@ -357,8 +357,9 @@ public final class CallSession implements AutoCloseable {
         PeerConnectionFactory created=null;
         try{
             PeerConnectionFactory.Options options=new PeerConnectionFactory.Options();
-            options.networkIgnoreMask=PeerConnectionFactory.Options.ADAPTER_TYPE_VPN
-                    |PeerConnectionFactory.Options.ADAPTER_TYPE_LOOPBACK;
+            // Media may ride the Uzelio tunnel: when both devices share one network, the VPN
+            // interface is the only direct path between them.
+            options.networkIgnoreMask=PeerConnectionFactory.Options.ADAPTER_TYPE_LOOPBACK;
             created=PeerConnectionFactory.builder().setOptions(options)
                     .setAudioDeviceModule(module).createPeerConnectionFactory();
             if(created==null)throw new IllegalStateException("Peer connection factory");
@@ -759,6 +760,7 @@ public final class CallSession implements AutoCloseable {
     private final class PeerObserver implements PeerConnection.Observer {
         @Override public void onSignalingChange(PeerConnection.SignalingState value){}
         @Override public void onIceConnectionChange(PeerConnection.IceConnectionState value){
+android.util.Log.i("uzelio.call","ice="+value);
             if(value==PeerConnection.IceConnectionState.FAILED)submit(CallSession.this::fail);
         }
         @Override public void onIceConnectionReceivingChange(boolean receiving){}
