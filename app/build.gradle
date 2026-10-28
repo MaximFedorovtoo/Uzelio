@@ -10,8 +10,8 @@ android {
         applicationId 'org.uzel.app'
         minSdk 29
         targetSdk 35
-        versionCode 12
-        versionName '0.8.3'
+        versionCode 13
+        versionName '0.8.4'
         testInstrumentationRunner 'android.test.InstrumentationTestRunner'
     }
     // libsignal ships one ~118 MiB native library per ABI; the four-ABI universal APK is ~540 MiB.
