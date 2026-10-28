@@ -67,4 +67,13 @@
     <string name="chat_delete_message">Удалить чат и всю историю на этом устройстве?</string>
     <string name="chat_paste">Вставить</string>
     <string name="chat_share">Поделиться</string>
+    <string name="chat_pair">Спарить</string>
+    <string name="chat_pair_qr">Показать QR и код</string>
+    <string name="chat_pair_code">Ввести код</string>
+    <string name="chat_pair_join">Присоединиться</string>
+    <string name="chat_pair_scan">Сканировать QR</string>
+    <string name="chat_pair_enter">Введите 6-значный код со второго телефона</string>
+    <string name="chat_pair_none">Устройство не ответило</string>
+    <string name="chat_pair_qr_hint">Покажите этот QR или введите код на другом телефоне</string>
+    <string name="chat_pair_code_hint">или введите код %1$s</string>
 </resources>

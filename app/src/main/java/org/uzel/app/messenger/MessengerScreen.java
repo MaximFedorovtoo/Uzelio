@@ -1,4 +1,5 @@
 package org.uzel.app.messenger;
+import org.uzel.app.CodePairing;
 
 import android.Manifest;
 import android.animation.ValueAnimator;
@@ -93,7 +94,7 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
     private volatile boolean closed;
     public MessengerScreen(Activity activity,Bundle saved){super(activity);this.activity=activity;setOrientation(VERTICAL);setBackground(screenBackground());setPadding(dp(10),dp(10),dp(10),dp(10));
         if(saved!=null){selected=saved.getString("chat.selected","");Bundle all=saved.getBundle("chat.drafts");if(all!=null)for(String k:all.keySet())drafts.put(k,all.getString(k,""));}
-        listTools=column();LinearLayout actions=row();TextView sectionTitle=text(R.string.chat_title,24,TEXT);sectionTitle.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));sectionTitle.setLetterSpacing(-0.02f);actions.addView(sectionTitle,new LayoutParams(0,-2,1));Button add=button(R.string.chat_add,()->addContact()),invite=button(R.string.chat_invite,()->invitation());add.setText("+");add.setTextSize(22);add.setContentDescription(getResources().getString(R.string.chat_add));add.setBackground(circleSurface(true));actions.addView(add,new LayoutParams(dp(48),dp(48)));listTools.addView(actions);invitationButton=invite;
+        listTools=column();LinearLayout actions=row();TextView sectionTitle=text(R.string.chat_title,24,TEXT);sectionTitle.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));sectionTitle.setLetterSpacing(-0.02f);actions.addView(sectionTitle,new LayoutParams(0,-2,1));Button add=button(R.string.chat_add,()->addContact()),invite=button(R.string.chat_invite,()->invitation());add.setText("+");add.setTextSize(22);add.setContentDescription(getResources().getString(R.string.chat_add));add.setBackground(circleSurface(true));actions.addView(add,new LayoutParams(dp(48),dp(48)));Button pair=button(R.string.chat_pair,this::pairDevice);pair.setBackground(tintPill(ACCENT));pair.setTextColor(ACCENT);LayoutParams pairParams=new LayoutParams(dp(104),dp(44));pairParams.setMarginStart(dp(8));actions.addView(pair,pairParams);listTools.addView(actions);invitationButton=invite;
         status=text(R.string.chat_loading,12,MUTED);status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);status.setMaxLines(2);status.setEllipsize(TextUtils.TruncateAt.END);addView(status);retry=button(R.string.chat_retry,()->{if(service==null){AndroidMessenger.chats(activity);refresh();}else work(()->service.retryNow());});addView(retry);retry.setVisibility(GONE);
         list=column();search=input(R.string.chat_search);search.setSingleLine(true);search.setBackground(fieldPill());search.setPadding(dp(16),dp(10),dp(16),dp(10));listTools.addView(search);list.addView(listTools);contactScroll=new ScrollView(activity);contactScroll.setFillViewport(true);contactScroll.addView(list);addView(contactScroll,new LayoutParams(-1,0,1));
         thread=column();LinearLayout title=row();title.setPadding(0,0,0,dp(4));Button back=button(R.string.chat_back,()->backToContacts());back.setText("‹");back.setTextSize(26);back.setContentDescription(getResources().getString(R.string.chat_back));back.setBackground(circleSurface(false));title.addView(back,new LayoutParams(dp(44),dp(44)));activeAvatar=new TextView(activity);activeAvatar.setTextColor(ACCENT);activeAvatar.setTextSize(15);activeAvatar.setGravity(Gravity.CENTER);activeAvatar.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));activeAvatar.setBackground(avatarBackground(ACCENT));LayoutParams avatarSize=new LayoutParams(dp(38),dp(38));avatarSize.setMarginEnd(dp(10));title.addView(activeAvatar,avatarSize);heading=text(R.string.chat_select,18,TEXT);heading.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));heading.setSingleLine(true);heading.setEllipsize(TextUtils.TruncateAt.END);title.addView(heading,new LayoutParams(0,-2,1));callButton=iconControl(ChatIcons.PHONE,MINT,dp(40),this::startCall,"Позвонить");LayoutParams callIconParams=new LayoutParams(dp(40),dp(40));callIconParams.setMarginStart(dp(6));title.addView(callButton,callIconParams);videoButton=iconControl(ChatIcons.VIDEO,IRIS,dp(40),this::startVideoCall,"Видеозвонок");LayoutParams videoIconParams=new LayoutParams(dp(40),dp(40));videoIconParams.setMarginStart(dp(4));title.addView(videoButton,videoIconParams);thread.addView(title);
@@ -173,7 +174,13 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
     private void send(){if(closed)return;String value=draft.getText().toString().trim(),id=selected;if(value.isEmpty()||service==null||id.isEmpty())return;send.setEnabled(false);submit(()->{try{service.send(id,value);postUi(()->{if(selected.equals(id)&&draft.getText().toString().trim().equals(value)){draft.setText("");drafts.put(id,"");}else if(drafts.getOrDefault(id,"").trim().equals(value))drafts.put(id,"");signature="";refresh();});}catch(Exception e){postUi(()->{status.setVisibility(VISIBLE);status.setText(R.string.chat_error);retry.setVisibility(VISIBLE);send.setEnabled(true);});}});}
     private void updateComposer(){boolean ready=service!=null&&!selected.isEmpty();boolean inCall=call!=null&&call.isActive();attach.setEnabled(ready&&recorder==null&&!inCall);voice.setEnabled((ready||recorder!=null)&&!inCall);callButton.setEnabled(service!=null&&!selected.isEmpty()&&recorder==null&&!inCall);videoButton.setEnabled(service!=null&&!selected.isEmpty()&&recorder==null&&!inCall);}
     private void pickFile(){if(closed||recorder!=null||service==null||selected.isEmpty())return;attachmentContact=selected;Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("*/*");intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);try{activity.startActivityForResult(intent,REQUEST_FILE);}catch(Exception e){attachmentContact="";fail(R.string.chat_file_unreadable);}}
-    public void onActivityResult(int request,int result,Intent data){if(request!=REQUEST_FILE)return;String contact=attachmentContact;attachmentContact="";if(result!=Activity.RESULT_OK||data==null||data.getData()==null||closed)return;String target=contact.isEmpty()?selected:contact;if(target.isEmpty())return;sendPicked(data.getData(),target);}
+    public void onActivityResult(int request,int result,Intent data){
+        if(request==REQUEST_QR){
+            String contents=result==android.app.Activity.RESULT_OK&&data!=null?data.getStringExtra("SCAN_RESULT"):null;
+            if(contents!=null){int start=contents.indexOf("uzelio-chat:");if(start>=0){openAddContact(contents.substring(start).trim());return;}}
+            return;
+        }
+        if(request!=REQUEST_FILE)return;String contact=attachmentContact;attachmentContact="";if(result!=Activity.RESULT_OK||data==null||data.getData()==null||closed)return;String target=contact.isEmpty()?selected:contact;if(target.isEmpty())return;sendPicked(data.getData(),target);}
     private void sendPicked(Uri uri,String contact){
         submit(()->{
             String name="",mime="application/octet-stream";byte[] data=null;
@@ -558,7 +565,61 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
     public void openAddContact(String code){addContact(code==null?"":code);}
     private void addContact(){addContact("");}
     private void addContact(String prefill){LinearLayout form=column();form.setPadding(dp(20),dp(10),dp(20),dp(10));EditText code=input(R.string.chat_code),name=input(R.string.chat_name);code.setMinLines(2);code.setMaxLines(3);name.setSingleLine(true);String clip=prefill==null||prefill.isEmpty()?clipboardCode():prefill;if(!clip.isEmpty())code.setText(clip);form.addView(code);Button paste=button(R.string.chat_paste,()->{String value=clipboardCode();if(!value.isEmpty())code.setText(value);});paste.setBackground(tintPill(ACCENT));paste.setTextColor(ACCENT);form.addView(paste);form.addView(name);form.addView(text(R.string.chat_verify_notice,14,MUTED));AlertDialog d=new AlertDialog.Builder(activity).setTitle(R.string.chat_add).setView(form).setNegativeButton(R.string.chat_cancel,null).setPositiveButton(R.string.chat_add,null).create();d.setOnShowListener(v->d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(w->{String c=code.getText().toString().trim(),n=name.getText().toString().trim();if(c.isEmpty()||n.isEmpty()){name.setError(getResources().getString(R.string.chat_name));return;}work(()->{String safety=ChatInvite.decode(c).safetyCode();postUi(()->new AlertDialog.Builder(activity).setTitle(R.string.chat_verify_title).setMessage(getResources().getString(R.string.chat_safety,safety)+"\n\n"+getResources().getString(R.string.chat_verify_notice)).setNegativeButton(R.string.chat_cancel,null).setPositiveButton(R.string.chat_match,(a,b)->work(()->{service.addContact(c,n);postUi(d::dismiss);})).show());});}));d.show();}
-    private void invitation(){LinearLayout form=column();form.setPadding(dp(20),dp(10),dp(20),dp(10));form.addView(text(R.string.chat_host,15,TEXT));EditText host=input(R.string.chat_host_hint);host.setSingleLine(true);host.setText(LocalAddress.preferred());form.addView(host);EditText relay=input(R.string.chat_relay_hint);relay.setSingleLine(true);form.addView(text(R.string.chat_relay,13,MUTED));form.addView(relay);TextView port=text(R.string.chat_loading,13,MUTED);if(service!=null)port.setText(getResources().getString(R.string.chat_port,service.localPort()));form.addView(port);form.addView(text(R.string.chat_invite_notice,14,MUTED));AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(R.string.chat_invite).setView(form).setNegativeButton(R.string.chat_cancel,null).setPositiveButton(R.string.chat_generate,null).create();dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(w->{String advertisedHost=host.getText().toString().trim();String relayValue=relay.getText().toString().trim();work(()->{String code=service.invitation(advertisedHost,relayValue);String safety=ChatInvite.decode(code).safetyCode();postUi(()->{dialog.dismiss();TextView value=new TextView(activity);value.setText(getResources().getString(R.string.chat_safety,safety)+"\n\n"+code);value.setTextIsSelectable(true);value.setPadding(dp(20),dp(10),dp(20),dp(10));ScrollView codeScroll=new ScrollView(activity);codeScroll.addView(value);FrameLayout codeHolder=new FrameLayout(activity);codeHolder.addView(codeScroll,new FrameLayout.LayoutParams(-1,dp(280)));new AlertDialog.Builder(activity).setTitle(R.string.chat_invite).setView(codeHolder).setNegativeButton(R.string.chat_cancel,null).setNeutralButton(R.string.chat_share,(a,b)->shareInvite(code)).setPositiveButton(R.string.chat_copy,(a,b)->{((android.content.ClipboardManager)activity.getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Uzelio",code));Toast.makeText(activity,R.string.chat_copied,Toast.LENGTH_SHORT).show();}).show();});});}));dialog.show();}
+    public static final int REQUEST_QR=78;
+    /** Pairing without pasting: QR, six digit LAN code, or the system share sheet. */
+    private void pairDevice(){
+        if(service==null){AndroidMessenger.chats(activity).thenRun(()->postUi(this::pairDevice));return;}
+        String[] items={activity.getString(R.string.chat_pair_qr),activity.getString(R.string.chat_pair_code),activity.getString(R.string.chat_pair_scan)};
+        new android.app.AlertDialog.Builder(activity).setTitle(R.string.chat_pair)
+            .setItems(items,(dialog,which)->{if(which==0)showPairQr();else if(which==1)enterPairCode();else scanPairQr();})
+            .setNegativeButton(R.string.chat_cancel,null).show();
+    }
+    private void showPairQr(){
+        work(()->{
+            String code=service.invitation(LocalAddress.preferred(),"");
+            String digits=String.format(java.util.Locale.ROOT,"%06d",Math.abs(code.hashCode())%1000000);
+            CodePairing.serve(digits,code);
+            postUi(()->{
+                android.graphics.Bitmap bitmap=qr(code);
+                android.widget.ImageView image=new android.widget.ImageView(activity);image.setImageBitmap(bitmap);image.setAdjustViewBounds(true);image.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+                TextView label=new TextView(activity);label.setText(activity.getString(R.string.chat_pair_qr_hint)+"\n\n"+activity.getString(R.string.chat_pair_code_hint,digits));label.setTextColor(TEXT);label.setTextSize(14);label.setGravity(Gravity.CENTER);label.setPadding(dp(12),dp(8),dp(12),dp(8));
+                LinearLayout holder=column();holder.addView(image,new LayoutParams(-1,dp(260)));holder.addView(label);
+                new android.app.AlertDialog.Builder(activity).setTitle(R.string.chat_pair).setView(holder).setPositiveButton(R.string.chat_cancel,(a,b)->CodePairing.stop()).setNeutralButton(R.string.chat_share,(a,b)->shareInvite(code)).show();
+            });
+        });
+    }
+    private void enterPairCode(){
+        TextView hint=new TextView(activity);hint.setText(R.string.chat_pair_enter);hint.setTextColor(MUTED);hint.setTextSize(13);
+        LinearLayout form=column();EditText field=input(R.string.chat_pair_code_hint);field.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);form.addView(hint);form.addView(field);
+        new android.app.AlertDialog.Builder(activity).setTitle(R.string.chat_pair).setView(form)
+            .setNegativeButton(R.string.chat_cancel,null)
+            .setPositiveButton(R.string.chat_pair_join,(a,b)->{String value=field.getText().toString().trim();setupLookup(value);}).show();
+    }
+    private void setupLookup(String value){
+        if(value.length()!=6){Toast.makeText(activity,R.string.chat_pair_none,Toast.LENGTH_SHORT).show();return;}
+        submit(()->{String found=CodePairing.lookup(value,6000);postUi(()->{if(found==null)Toast.makeText(activity,R.string.chat_pair_none,Toast.LENGTH_LONG).show();else openAddContact(found);});});
+    }
+    private void scanPairQr(){
+        Intent scan=new Intent(activity,com.journeyapps.barcodescanner.CaptureActivity.class);
+        scan.setAction("com.google.zxing.client.android.SCAN");
+        scan.putExtra("SCAN_FORMATS","QR_CODE");
+        scan.putExtra("PROMPT_MESSAGE",activity.getString(R.string.chat_pair_scan));
+        scan.putExtra("BEEP_ENABLED",false);
+        try{activity.startActivityForResult(scan,REQUEST_QR);}
+        catch(RuntimeException unavailable){Toast.makeText(activity,R.string.chat_pair_scan,Toast.LENGTH_SHORT).show();}
+    }
+    private android.graphics.Bitmap qr(String text){
+        try{
+            java.util.EnumMap<com.google.zxing.EncodeHintType,Object> hints=new java.util.EnumMap<>(com.google.zxing.EncodeHintType.class);
+            hints.put(com.google.zxing.EncodeHintType.ERROR_CORRECTION,com.google.zxing.qrcode.decoder.ErrorCorrectionLevel.L);
+            hints.put(com.google.zxing.EncodeHintType.CHARACTER_SET,"UTF-8");
+            var matrix=new com.google.zxing.qrcode.QRCodeWriter().encode(text,com.google.zxing.BarcodeFormat.QR_CODE,720,720,hints);
+            android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(720,720,android.graphics.Bitmap.Config.ARGB_8888);
+            for(int x=0;x<720;x++)for(int y=0;y<720;y++)bitmap.setPixel(x,y,matrix.get(x,y)?0xFF04090F:0xFFFFFFFF);
+            return bitmap;
+        }catch(Exception unavailable){return null;}
+    }
+    private static final class EditableText{}    private void invitation(){LinearLayout form=column();form.setPadding(dp(20),dp(10),dp(20),dp(10));form.addView(text(R.string.chat_host,15,TEXT));EditText host=input(R.string.chat_host_hint);host.setSingleLine(true);host.setText(LocalAddress.preferred());form.addView(host);EditText relay=input(R.string.chat_relay_hint);relay.setSingleLine(true);form.addView(text(R.string.chat_relay,13,MUTED));form.addView(relay);TextView port=text(R.string.chat_loading,13,MUTED);if(service!=null)port.setText(getResources().getString(R.string.chat_port,service.localPort()));form.addView(port);form.addView(text(R.string.chat_invite_notice,14,MUTED));AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(R.string.chat_invite).setView(form).setNegativeButton(R.string.chat_cancel,null).setPositiveButton(R.string.chat_generate,null).create();dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(w->{String advertisedHost=host.getText().toString().trim();String relayValue=relay.getText().toString().trim();work(()->{String code=service.invitation(advertisedHost,relayValue);String safety=ChatInvite.decode(code).safetyCode();postUi(()->{dialog.dismiss();TextView value=new TextView(activity);value.setText(getResources().getString(R.string.chat_safety,safety)+"\n\n"+code);value.setTextIsSelectable(true);value.setPadding(dp(20),dp(10),dp(20),dp(10));ScrollView codeScroll=new ScrollView(activity);codeScroll.addView(value);FrameLayout codeHolder=new FrameLayout(activity);codeHolder.addView(codeScroll,new FrameLayout.LayoutParams(-1,dp(280)));new AlertDialog.Builder(activity).setTitle(R.string.chat_invite).setView(codeHolder).setNegativeButton(R.string.chat_cancel,null).setNeutralButton(R.string.chat_share,(a,b)->shareInvite(code)).setPositiveButton(R.string.chat_copy,(a,b)->{((android.content.ClipboardManager)activity.getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Uzelio",code));Toast.makeText(activity,R.string.chat_copied,Toast.LENGTH_SHORT).show();}).show();});});}));dialog.show();}
     private String clipboardCode(){
         try{
             android.content.ClipboardManager clipboard=(android.content.ClipboardManager)activity.getSystemService(Context.CLIPBOARD_SERVICE);

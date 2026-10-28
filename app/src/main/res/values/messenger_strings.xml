@@ -67,4 +67,13 @@
     <string name="chat_delete_message">Delete this chat and its history on this device?</string>
     <string name="chat_paste">Paste</string>
     <string name="chat_share">Share</string>
+    <string name="chat_pair">Pair</string>
+    <string name="chat_pair_qr">Show QR and code</string>
+    <string name="chat_pair_code">Enter code</string>
+    <string name="chat_pair_join">Join</string>
+    <string name="chat_pair_scan">Scan QR</string>
+    <string name="chat_pair_enter">Enter the 6-digit code from the other phone</string>
+    <string name="chat_pair_none">No device answered</string>
+    <string name="chat_pair_qr_hint">Show this QR or type the code on the other device</string>
+    <string name="chat_pair_code_hint">or type code %1$s</string>
 </resources>
