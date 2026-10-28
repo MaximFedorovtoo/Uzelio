@@ -19,6 +19,7 @@ public final class ChatService implements AutoCloseable {
     private final ChatTransport transport;
     private final NetworkAccess network;
     private final Map<String,RelayClient> relays=new ConcurrentHashMap<>();
+    private final Map<String,Assembly> assemblies=new ConcurrentHashMap<>();
     private final Map<String,ChatInvite> invites=new ConcurrentHashMap<>();
     @FunctionalInterface public interface Listener { void incoming(String contactId,ChatRepository.Message message); }
     private volatile Listener listener=(contactId,message)->{};
@@ -73,6 +74,30 @@ public final class ChatService implements AutoCloseable {
         if(invite.relay()!=null)relay(invite);
         retrySoon();return repository.contact(invite.id());
     }
+    /**
+     * Sends a file as one metadata frame plus bounded chunks. Every frame is a separate
+     * Signal event with its own durable outbox row, so a retry never duplicates content.
+     */
+    public ChatRepository.Message sendFile(String contactId,String name,String mime,byte[] data)throws Exception {
+        ensureOpen();var contact=requireContact(contactId);ChatInvite invite=invites.get(contact.id());
+        if(name==null||name.isBlank()||name.length()>200)throw new IllegalArgumentException("File name is required");
+        if(mime==null||!mime.matches("[a-z0-9.+-]{1,100}/[a-z0-9.+-]{1,100}"))throw new IllegalArgumentException("File type is required");
+        if(data==null||data.length<1||data.length>ChatWire.MAX_FILE)throw new IllegalArgumentException("File must be 1..8388608 bytes");
+        String id=UUID.randomUUID().toString();long now=System.currentTimeMillis();
+        var attachment=new ChatRepository.Attachment(name,mime,data.length);
+        var message=new ChatRepository.Message(id,contactId,"",true,"queued",now,attachment);
+        messenger.establishIfAbsent(invite.address(),invite.bundle());
+        int chunks=(data.length+ChatWire.MAX_CHUNK-1)/ChatWire.MAX_CHUNK;
+        byte[] meta=ChatWire.encodeMeta(new ChatWire.FileMeta(id,name,mime,data.length,chunks,now));
+        messenger.send(invite.address(),"f_"+id+"_meta",meta,(records,outbound)->repository.queueFile(records,message,data,outbound));
+        for(int index=0;index<chunks;index++){
+            int offset=index*ChatWire.MAX_CHUNK,length=Math.min(ChatWire.MAX_CHUNK,data.length-offset);
+            byte[] frame=ChatWire.encodeChunk(new ChatWire.FileChunk(id,index,java.util.Arrays.copyOfRange(data,offset,offset+length)));
+            String operation="f_"+id+"_"+index;
+            messenger.send(invite.address(),operation,frame,(records,outbound)->repository.queueChunk(records,contactId,operation,outbound));
+        }
+        retrySoon();return message;
+    }
     public ChatRepository.Message send(String contactId,String text)throws Exception {
         ensureOpen();var contact=requireContact(contactId);ChatInvite invite=invites.get(contact.id());
         if(text==null||text.trim().isEmpty()||text.getBytes(StandardCharsets.UTF_8).length>ChatWire.MAX_TEXT)throw new IllegalArgumentException("Message must contain 1–32768 UTF-8 bytes");
@@ -94,8 +119,12 @@ public final class ChatService implements AutoCloseable {
     private void deliver(String contactId,List<ChatRepository.Pending> pending) {
         try {
             ChatInvite invite=invites.get(requireContact(contactId).id());
+            // Metadata must precede chunks; the rest stays in stable order for a deterministic retry.
+            var ordered=new java.util.ArrayList<>(pending);
+            ordered.sort(java.util.Comparator.comparingInt((ChatRepository.Pending p)->p.messageId().endsWith("_meta")?0:1)
+                    .thenComparing(ChatRepository.Pending::messageId));
             // One offline peer occupies at most one worker and gets one failed attempt per sweep.
-            for(var message:pending) {
+            for(var message:ordered) {
                 if(closed)return;
                 var outbound=new SignalMessenger.Outbound(message.cipherType(),message.ciphertext());
                 SignalMessenger.Outbound reply;
@@ -135,25 +164,76 @@ public final class ChatService implements AutoCloseable {
         if(closed)return false;for(var invite:invites.values())if(TlsIdentity.constantEquals(invite.tlsFingerprint(),fingerprint))return true;return false;
     }
     private SignalMessenger.Outbound receive(String fingerprint,SignalMessenger.Outbound wire)throws Exception {
-        ensureOpen();for(var invite:invites.values())if(TlsIdentity.constantEquals(invite.tlsFingerprint(),fingerprint))return receiveFrom(invite,wire,false);
+        ensureOpen();
+        for(var invite:invites.values())if(TlsIdentity.constantEquals(invite.tlsFingerprint(),fingerprint))return receiveFrom(invite,wire,false);
         throw new SecurityException("Unknown chat identity");
     }
     private SignalMessenger.Outbound receiveFrom(ChatInvite invite,SignalMessenger.Outbound wire,boolean acknowledgementOnly)throws Exception {
         ensureOpen();
         final ChatWire.Frame[] frame=new ChatWire.Frame[1];
+        final String[] ackId=new String[1];
         final boolean[] fresh=new boolean[1];
         messenger.receive(invite.address(),wire.type(),wire.body(),(records,received)->{
-            ChatWire.Frame decoded=ChatWire.decode(received.plaintext());frame[0]=decoded;
             fresh[0]=!received.duplicate();
-            if(acknowledgementOnly&&decoded.kind()!=ChatWire.ACK)throw new SecurityException("Expected an authenticated receipt");
-            if(decoded.kind()==ChatWire.TEXT)repository.receiveText(records,new ChatRepository.Message(decoded.id(),invite.id(),decoded.text(),false,"received",decoded.timeMillis()));
-            else {repository.delivered(records,invite.id(),decoded.id());messenger.discardOutbox(records,invite.address(),decoded.id());}
+            byte[] plain=received.plaintext();
+            int magic=ChatWire.magic(plain);
+            if(magic==ChatWire.META_MAGIC){
+                ChatWire.FileMeta meta=ChatWire.decodeMeta(plain);ackId[0]="f_"+meta.id()+"_meta";
+                if(acknowledgementOnly)throw new SecurityException("Expected an authenticated receipt");
+                if(fresh[0]){
+                    if(assemblies.size()>16)assemblies.clear();
+                    assemblies.computeIfAbsent(key(invite.id(),meta.id()),k->new Assembly()).meta(meta);
+                }
+            }else if(magic==ChatWire.CHUNK_MAGIC){
+                ChatWire.FileChunk chunk=ChatWire.decodeChunk(plain);ackId[0]="f_"+chunk.id()+"_"+chunk.index();
+                if(acknowledgementOnly)throw new SecurityException("Expected an authenticated receipt");
+                if(fresh[0]){
+                    Assembly assembly=assemblies.get(key(invite.id(),chunk.id()));
+                    if(assembly==null)throw new IOException("File chunk before metadata");
+                    byte[] complete=assembly.chunk(chunk);
+                    if(complete!=null){
+                        repository.receiveFile(records,new ChatRepository.Message(chunk.id(),invite.id(),"",false,"received",assembly.time(),assembly.attachment()),complete);
+                        assemblies.remove(key(invite.id(),chunk.id()));
+                    }
+                }
+            }else{
+                ChatWire.Frame decoded=ChatWire.decode(plain);frame[0]=decoded;ackId[0]=decoded.id();
+                if(acknowledgementOnly&&decoded.kind()!=ChatWire.ACK)throw new SecurityException("Expected an authenticated receipt");
+                if(decoded.kind()==ChatWire.TEXT)repository.receiveText(records,new ChatRepository.Message(decoded.id(),invite.id(),decoded.text(),false,"received",decoded.timeMillis()));
+                else {repository.delivered(records,invite.id(),decoded.id());messenger.discardOutbox(records,invite.address(),decoded.id());}
+            }
         });
-        if(frame[0].kind()==ChatWire.TEXT&&fresh[0])notifyIncoming(invite,frame[0]);
-        if(frame[0].kind()==ChatWire.ACK)return null;
+        if(frame[0]!=null&&frame[0].kind()==ChatWire.TEXT&&fresh[0])notifyIncoming(invite,frame[0]);
+        if(ackId[0]==null||(frame[0]!=null&&frame[0].kind()==ChatWire.ACK))return null;
         // The stable operation ID reuses exactly the same encrypted ACK after packet loss/restart.
-        String operation="ack_"+Base64.getUrlEncoder().withoutPadding().encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(frame[0].id().getBytes(StandardCharsets.US_ASCII)));
-        return messenger.send(invite.address(),operation,ChatWire.encode(new ChatWire.Frame(ChatWire.ACK,frame[0].id(),0,"")));
+        String operation="ack_"+Base64.getUrlEncoder().withoutPadding().encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(ackId[0].getBytes(StandardCharsets.US_ASCII)));
+        return messenger.send(invite.address(),operation,ChatWire.encode(new ChatWire.Frame(ChatWire.ACK,ackId[0],0,"")));
+    }
+    private static String key(String contactId,String fileId){return contactId+":"+fileId;}
+    /** Bounded in-memory reassembly; chunks may arrive out of order and reach the store only once. */
+    private static final class Assembly {
+        private ChatWire.FileMeta meta;
+        private final Map<Integer,byte[]> chunks=new java.util.TreeMap<>();
+        private int bytes;
+        synchronized void meta(ChatWire.FileMeta value){if(meta==null)meta=value;}
+        synchronized byte[] chunk(ChatWire.FileChunk chunk)throws IOException{
+            if(meta==null)throw new IOException("File chunk before metadata");
+            if(chunk.index()>=meta.chunks())throw new IOException("Unexpected file chunk index");
+            if(chunks.putIfAbsent(chunk.index(),chunk.data())!=null)return null;
+            bytes+=chunk.data().length;
+            if(bytes>meta.size())throw new IOException("File exceeds its declared size");
+            if(chunks.size()!=meta.chunks())return null;
+            java.io.ByteArrayOutputStream data=new java.io.ByteArrayOutputStream(meta.size());
+            for(int index=0;index<meta.chunks();index++){
+                byte[] part=chunks.get(index);
+                if(part==null)throw new IOException("Missing file chunk");
+                data.write(part,0,part.length);
+            }
+            if(data.size()!=meta.size())throw new IOException("File size mismatch");
+            return data.toByteArray();
+        }
+        ChatRepository.Attachment attachment(){return new ChatRepository.Attachment(meta.name(),meta.mime(),meta.size());}
+        long time(){return meta.timeMillis();}
     }
     private void notifyIncoming(ChatInvite invite,ChatWire.Frame frame){
         try{listener.incoming(invite.id(),new ChatRepository.Message(frame.id(),invite.id(),frame.text(),false,"received",frame.timeMillis()));}
@@ -161,7 +241,7 @@ public final class ChatService implements AutoCloseable {
     }
     private ChatRepository.Contact requireContact(String id)throws Exception {var contact=repository.contact(id);if(contact==null)throw new IllegalArgumentException("Unknown chat contact");return contact;}
     private void retrySoon(){if(!closed&&queuedRetry.compareAndSet(false,true))try{retries.execute(()->{try{retryQuietly();}finally{queuedRetry.set(false);}});}catch(RejectedExecutionException stopped){queuedRetry.set(false);}}
-    private void retryQuietly(){if(!closed)try{retryNow();}catch(Exception ignored){/* Repository/transport failures never imply delivery. */}}
+    private void retryQuietly(){if(!closed)try{retryNow();}catch(Exception ignored){/* Failure leaves original ciphertext queued, without delivery claims or logs. */}}
     private void ensureOpen(){if(closed)throw new IllegalStateException("Chat service is closed");}
     public void close(){closed=true;for(RelayClient client:relays.values())client.close();relays.clear();transport.close();retries.shutdownNow();deliveries.shutdownNow();try{retries.awaitTermination(2,TimeUnit.SECONDS);deliveries.awaitTermination(2,TimeUnit.SECONDS);}catch(InterruptedException e){Thread.currentThread().interrupt();}}
 }
