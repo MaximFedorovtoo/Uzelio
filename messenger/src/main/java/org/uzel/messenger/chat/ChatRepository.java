@@ -30,7 +30,20 @@ public final class ChatRepository {
         r.put("chat-contact",c.id(),encode(out->{out.writeUTF(c.id());out.writeUTF(c.name());out.writeUTF(c.inviteCode());}));
     }
     public List<Message> history(String contactId)throws Exception{return store.read(r->{var result=new ArrayList<Message>();for(byte[] b:r.list("chat-message").values()){Message m=messageBytes(b);if(m.contactId().equals(contactId))result.add(m);}result.sort(Comparator.comparingLong(Message::timeMillis).thenComparing(Message::id));return List.copyOf(result.subList(Math.max(0,result.size()-500),result.size()));});}
-    public List<Pending> pending()throws Exception{return store.read(r->{var result=new ArrayList<Pending>();for(byte[] b:r.list("chat-pending").values())result.add(pendingBytes(b));result.sort(Comparator.comparing(Pending::messageId));return List.copyOf(result);});}
+    /** Removes a contact with its messages, pending frames and stored blobs. */
+    public void deleteContact(TransactionalStore.Records r,String contactId)throws Exception{
+        validId(contactId);
+        if(r.get("chat-contact",contactId)==null)return;
+        r.remove("chat-contact",contactId);
+        String incoming=contactId+":in:",outgoing=contactId+":out:";
+        for(String key:new ArrayList<>(r.list("chat-message").keySet())){
+            if(!key.startsWith(incoming)&&!key.startsWith(outgoing))continue;
+            byte[] stored=r.get("chat-message",key);
+            if(stored!=null)r.remove("chat-blob",messageBytes(stored).id());
+            r.remove("chat-message",key);
+        }
+        for(String key:new ArrayList<>(r.list("chat-pending").keySet()))if(key.startsWith(incoming)||key.startsWith(outgoing))r.remove("chat-pending",key);
+    }    public List<Pending> pending()throws Exception{return store.read(r->{var result=new ArrayList<Pending>();for(byte[] b:r.list("chat-pending").values())result.add(pendingBytes(b));result.sort(Comparator.comparing(Pending::messageId));return List.copyOf(result);});}
     public void queueOutgoing(TransactionalStore.Records r,Message m,SignalMessenger.Outbound outbound)throws Exception{
         validate(m);if(!m.outgoing()||!"queued".equals(m.status()))throw new IllegalArgumentException("Invalid outgoing state");
         requireContact(r,m.contactId());String key=key(m.contactId(),m.id(),true);byte[] old=r.get("chat-message",key);

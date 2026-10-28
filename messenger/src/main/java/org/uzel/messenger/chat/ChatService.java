@@ -65,7 +65,18 @@ public final class ChatService implements AutoCloseable {
         return code;
     }
     public List<ChatRepository.Contact> contacts()throws Exception {ensureOpen();return repository.contacts();}
-    public String contactName(String contactId){try{var contact=repository.contact(contactId);return contact==null?"Uzelio":contact.name();}catch(Exception unavailable){return "Uzelio";}}
+    /** Deletes a conversation: contact, history, queued frames and stored files. */
+    public void deleteContact(String contactId)throws Exception{
+        ensureOpen();var contact=requireContact(contactId);ChatInvite invite=invites.get(contact.id());
+        messenger.mutate(records->repository.deleteContact(records,contactId));
+        invites.remove(contactId);
+        if(invite!=null&&invite.relay()!=null){
+            String key=invite.relay().encode();
+            boolean shared=false;
+            for(var other:invites.values())if(other.relay()!=null&&key.equals(other.relay().encode())){shared=true;break;}
+            if(!shared){RelayClient client=relays.remove(key);if(client!=null)try{client.close();}catch(Exception ignored){/* Already closed. */}}
+        }
+    }    public String contactName(String contactId){try{var contact=repository.contact(contactId);return contact==null?"Uzelio":contact.name();}catch(Exception unavailable){return "Uzelio";}}
     public List<ChatRepository.Message> history(String contactId)throws Exception {ensureOpen();requireContact(contactId);return repository.history(contactId);}
     /** Decrypted attachment bytes for a stored file message, or null when it has none. */
     public byte[] attachment(String messageId)throws Exception {ensureOpen();return repository.blob(messageId);}

@@ -63,4 +63,6 @@
     <string name="call_incoming">Входящий звонок</string>
     <string name="call_accept">Принять</string>
     <string name="call_decline">Отклонить</string>
+    <string name="chat_delete">Удалить</string>
+    <string name="chat_delete_message">Удалить чат и всю историю на этом устройстве?</string>
 </resources>

@@ -38,7 +38,7 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
     private final JLabel status=new JLabel("Добавьте контакт по приглашению"),heading=new JLabel("Выберите контакт для переписки");
     private final JButton send=button("Отправить"),retry=button("Повторить подключение"),back=button("‹"),attach=button("📎"),mic=button("🎤");
     private final JLabel activeAvatar=new AvatarLabel("");
-    private final JButton call=smallButton("Позвонить"),videoCall=smallButton("Видеозвонок");
+    private final JButton call=smallButton("Позвонить"),videoCall=smallButton("Видеозвонок"),delete=smallButton("Удалить");
     private final JPanel callPanel=column(),callActions=new JPanel(new FlowLayout(FlowLayout.LEFT,8,6));
     private final JLabel callTitle=new JLabel();
     private final VideoSurface callVideo=new VideoSurface();
@@ -84,7 +84,8 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
         JPanel title=column();JPanel head=new JPanel(new BorderLayout(10,0));head.setOpaque(false);back.setPreferredSize(new Dimension(36,36));back.setToolTipText("Назад к чатам");back.addActionListener(e->{drafts.put(selected,draft.getText());selected="";updateCallButton();revalidate();repaint();});head.add(back,BorderLayout.WEST);heading.setForeground(TEXT);heading.setFont(new Font("Segoe UI",Font.BOLD,19));JPanel person=new JPanel(new BorderLayout(12,0));person.setOpaque(false);activeAvatar.setPreferredSize(new Dimension(42,42));person.add(activeAvatar,BorderLayout.WEST);person.add(heading,BorderLayout.CENTER);head.add(person,BorderLayout.CENTER);
         call.setEnabled(false);call.setToolTipText("Позвонить контакту");call.getAccessibleContext().setAccessibleName("Позвонить контакту");call.addActionListener(e->startCall());
         videoCall.setEnabled(false);videoCall.setToolTipText("Видеозвонок контакту");videoCall.getAccessibleContext().setAccessibleName("Видеозвонок контакту");videoCall.addActionListener(e->startVideoCall());
-        JPanel callButtons=new JPanel(new FlowLayout(FlowLayout.RIGHT,6,0));callButtons.setOpaque(false);callButtons.add(call);callButtons.add(videoCall);head.add(callButtons,BorderLayout.EAST);title.add(head);
+        delete.setEnabled(false);delete.setToolTipText("Удалить чат");delete.getAccessibleContext().setAccessibleName("Удалить чат");delete.addActionListener(e->deleteChat());
+        JPanel callButtons=new JPanel(new FlowLayout(FlowLayout.RIGHT,6,0));callButtons.setOpaque(false);callButtons.add(delete);callButtons.add(call);callButtons.add(videoCall);head.add(callButtons,BorderLayout.EAST);title.add(head);
         JLabel route=new JLabel("Личная переписка · сквозное шифрование",SwingConstants.CENTER);route.setForeground(MUTED2);route.setFont(new Font("Segoe UI",Font.PLAIN,11));route.setBorder(new EmptyBorder(14,0,14,0));route.setAlignmentX(Component.CENTER_ALIGNMENT);route.setMaximumSize(new Dimension(Integer.MAX_VALUE,44));title.add(route);
         callTitle.setForeground(TEXT);callTitle.setFont(new Font("Segoe UI",Font.PLAIN,12));callPanel.setOpaque(false);callPanel.setBorder(new EmptyBorder(0,0,10,0));callPanel.setVisible(false);callPanel.add(callTitle);callVideo.setVisible(false);callVideo.setAlignmentX(Component.LEFT_ALIGNMENT);callPanel.add(callVideo);callActions.setOpaque(false);
         acceptCall.setToolTipText("Принять звонок");acceptCall.getAccessibleContext().setAccessibleName("Принять звонок");acceptCall.addActionListener(e->acceptIncoming());
@@ -101,7 +102,12 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
     }
     private static DocumentListener change(Runnable action){return new DocumentListener(){public void insertUpdate(DocumentEvent e){action.run();}public void removeUpdate(DocumentEvent e){action.run();}public void changedUpdate(DocumentEvent e){action.run();}};}
     public void refresh(){if(pending||closed)return;pending=true;String id=selected;submit(()->{try{if(service==null)service=DesktopMessenger.chats(root).get();var list=service.contacts();var history=id.isEmpty()?java.util.List.<ChatRepository.Message>of():service.history(id);postUi(()->{if(closed)return;pending=false;cached=list;for(var message:history)lastMessageTime.put(message.contactId(),message.timeMillis());retry.setVisible(false);status.setText(recorder!=null?"Запись…":"История остаётся на устройствах участников");renderContacts();if(selected.equals(id))renderHistory(history);send.setEnabled(!selected.isEmpty()&&!draft.getText().trim().isEmpty());updateCallButton();});}catch(Exception e){postUi(()->{pending=false;status.setText("Чаты недоступны. Повторите после разблокировки устройства.");retry.setVisible(true);});}});}
-    private void renderContacts(){contacts.setBackground(BG2);contacts.removeAll();String q=search.getText().trim().toLowerCase(Locale.ROOT);int count=0;for(var c:cached){if(!c.name().toLowerCase(Locale.ROOT).contains(q))continue;count++;
+    private void deleteChat(){
+        String id=selected;if(id==null||id.isEmpty()||service==null)return;
+        String name="чат";for(var contact:cached)if(contact.id().equals(id))name=contact.name();
+        if(JOptionPane.showConfirmDialog(this,"Удалить чат с "+name+" и всю историю на этом устройстве?","Удаление чата",JOptionPane.OK_CANCEL_OPTION,JOptionPane.WARNING_MESSAGE)!=JOptionPane.OK_OPTION)return;
+        submit(()->{try{service.deleteContact(id);postUi(()->{selected="";drafts.remove(id);updateCallButton();refresh();});}catch(Exception failed){postUi(()->status.setText("Не удалось удалить чат."));}});
+    }    private void renderContacts(){contacts.setBackground(BG2);contacts.removeAll();String q=search.getText().trim().toLowerCase(Locale.ROOT);int count=0;for(var c:cached){if(!c.name().toLowerCase(Locale.ROOT).contains(q))continue;count++;
         Color tint=avatarTint(c.name());if(c.id().equals(selected))((AvatarLabel)activeAvatar).tint(tint);
         JButton row=button("");row.setLayout(new BorderLayout(12,0));row.setAlignmentX(LEFT_ALIGNMENT);row.setMaximumSize(new Dimension(Integer.MAX_VALUE,76));row.setPreferredSize(new Dimension(260,76));row.setBackground(c.id().equals(selected)?RAISED:SURFACE);row.setBorder(new EmptyBorder(8,10,8,12));
         AvatarLabel avatar=new AvatarLabel(initials(c.name()));avatar.tint(tint);avatar.setHorizontalAlignment(SwingConstants.CENTER);avatar.setFont(new Font("Segoe UI",Font.BOLD,16));avatar.setOpaque(false);avatar.setPreferredSize(new Dimension(44,44));row.add(avatar,BorderLayout.WEST);JPanel copy=column();copy.setOpaque(false);JLabel name=label(c.name());name.setFont(new Font("Segoe UI",Font.BOLD,15));copy.add(name);JLabel hint=label("Личная переписка");hint.setFont(new Font("Segoe UI",Font.PLAIN,12));hint.setForeground(MUTED);copy.add(hint);row.add(copy,BorderLayout.CENTER);JPanel meta=column();meta.setOpaque(false);meta.setBorder(new EmptyBorder(4,0,0,4));Long time=lastMessageTime.get(c.id());if(time!=null){JLabel stamp=label(timeText(time));stamp.setFont(new Font("Segoe UI",Font.PLAIN,11));stamp.setForeground(MUTED2);stamp.setHorizontalAlignment(SwingConstants.RIGHT);meta.add(stamp);}row.add(meta,BorderLayout.EAST);row.getAccessibleContext().setAccessibleName(c.name());
@@ -243,7 +249,7 @@ public final class MessengerPanel extends JPanel implements AutoCloseable,Scroll
     }
     private void updateCallButton(){
         boolean ready=!closed&&!selected.isEmpty()&&service!=null&&!activeCall();
-        call.setEnabled(ready);videoCall.setEnabled(ready);
+        call.setEnabled(ready);videoCall.setEnabled(ready);delete.setEnabled(!closed&&!selected.isEmpty()&&service!=null);
         call.setToolTipText(selected.isEmpty()?"Выберите контакт для звонка":"Позвонить контакту");
         videoCall.setToolTipText(selected.isEmpty()?"Выберите контакт для видеозвонка":"Видеозвонок контакту");
     }

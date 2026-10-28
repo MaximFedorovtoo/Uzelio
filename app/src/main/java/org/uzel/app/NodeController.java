@@ -155,7 +155,7 @@ public final class NodeController {
     }
     public synchronized void startSharing(){
         if(node!=null || busy)return;
-        sharingRequested=true;
+        sharingRequested=true;prefs.edit().putBoolean("autoShare",true).apply();
         status="STARTING";
         context.startForegroundService(new Intent(context,UzelVpnService.class).setAction("START"));
     }
@@ -213,7 +213,7 @@ public final class NodeController {
             finally{if(epoch==generation.get())busy=false;}
         });
     }
-    public synchronized void stopSharing(){
+    public synchronized void stopSharing(){prefs.edit().putBoolean("autoShare",false).apply();
         sharingRequested=false;
         UzelVpnService old=service;
         stopResources();status="OFF";

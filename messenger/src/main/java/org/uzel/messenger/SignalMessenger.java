@@ -44,7 +44,8 @@ public final class SignalMessenger {
         String address=TransactionSignalStore.address(peer);byte[] bytes=identity.serialize();
         store.write(r->{checkAddress(r);byte[] old=r.get("trust",address);if(old!=null&&!Arrays.equals(old,bytes))throw new SecurityException("Identity replacement requires explicit recovery");r.put("trust",address,bytes);effect.apply(r);return null;});
     }
-    public PreKeyBundle publishPreKeyBundle()throws Exception{
+    /** Runs one store transaction; used for bookkeeping outside the protocol, e.g. deleting a chat. */
+    public void mutate(Mutation effect)throws Exception{store.write(r->{checkAddress(r);effect.apply(r);return null;});}    public PreKeyBundle publishPreKeyBundle()throws Exception{
         return store.write(r->{checkAddress(r);var s=new TransactionSignalStore(r);byte[] saved=r.get("local","prekey-counter");int id=saved==null?1:Math.addExact(ByteBuffer.wrap(saved).getInt(),1);
             ECKeyPair pre=ECKeyPair.generate(),signed=ECKeyPair.generate();KEMKeyPair kyber=KEMKeyPair.generate(KEMKeyType.KYBER_1024);
             var identity=s.getIdentityKeyPair();byte[] sig=identity.getPrivateKey().calculateSignature(signed.getPublicKey().serialize()),ksig=identity.getPrivateKey().calculateSignature(kyber.getPublicKey().serialize());
