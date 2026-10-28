@@ -363,7 +363,7 @@ public class MainActivity extends Activity {
             item.addView(artwork,new LinearLayout.LayoutParams(dp(24),dp(24)));TextView caption=label(title,10,tint,active);caption.setGravity(Gravity.CENTER);caption.setMaxLines(1);item.addView(caption);
             holder.addView(item,new FrameLayout.LayoutParams(-1,-1));
             if(i==1){navBadge=navBadgeView();FrameLayout.LayoutParams badgeParams=new FrameLayout.LayoutParams(-2,dp(18),Gravity.TOP|Gravity.END);badgeParams.topMargin=dp(4);badgeParams.setMarginEnd(dp(16));holder.addView(navBadge,badgeParams);renderNavBadge();}
-            holder.setOnClickListener(v->{press(v);showTab(index);});nav.addView(holder,new LinearLayout.LayoutParams(0,-2,1));
+            holder.setOnClickListener(v->{press(v);showTab(index);});nav.addView(holder,new LinearLayout.LayoutParams(0,dp(60),1));
             if(activePill!=null)revealPill(activePill);
         }
         buildHeader(tab);
