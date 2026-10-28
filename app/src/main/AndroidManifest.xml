@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+    <!-- Full-screen intent for a ringing incoming call; a normal permission, granted at install. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <queries>
         <intent>
@@ -33,6 +35,11 @@
                 android:value="User-started encrypted peer internet sharing and VPN tunnel"/>
             <intent-filter><action android:name="android.net.VpnService"/></intent-filter>
             <meta-data android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON" android:value="false"/>
+        </service>
+        <service android:name=".ChatLinkService" android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the chat listener running so incoming messages and calls are delivered while the app is off screen"/>
         </service>
         <uses-library android:name="android.test.runner" android:required="false"/>
     </application>

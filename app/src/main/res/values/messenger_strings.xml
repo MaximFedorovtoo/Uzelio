@@ -55,4 +55,12 @@
     <string name="chat_saved">Saved to Downloads/Uzelio</string>
     <string name="chat_save_failed">Could not save the file.</string>
     <string name="chat_play_failed">Could not play this audio.</string>
+    <string name="chat_link_channel">Chat connection</string>
+    <string name="chat_link_title">Uzelio is connected</string>
+    <string name="chat_link_text">Messages and calls arrive while the app is in the background.</string>
+    <string name="chat_link_stop">Stop</string>
+    <string name="call_channel">Incoming calls</string>
+    <string name="call_incoming">Incoming call</string>
+    <string name="call_accept">Accept</string>
+    <string name="call_decline">Decline</string>
 </resources>

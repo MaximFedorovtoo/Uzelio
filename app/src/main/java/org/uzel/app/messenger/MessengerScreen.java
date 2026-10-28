@@ -1,6 +1,7 @@
 package org.uzel.app.messenger;
 
 import android.Manifest;
+import android.animation.ValueAnimator;
 import android.app.*;
 import android.content.*;
 import android.content.pm.PackageManager;
@@ -13,6 +14,7 @@ import android.net.Uri;
 import android.os.*;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
+import android.provider.Settings;
 import android.text.*;
 import android.text.format.Formatter;
 import android.view.*;
@@ -30,7 +32,11 @@ import java.text.SimpleDateFormat;
 
 /** A persistent native composer; history refresh never replaces the input view. */
 public final class MessengerScreen extends LinearLayout implements AutoCloseable {
-    private static final int BG=0xff081524,SURFACE=0xff122a40,TEXT=0xffedf7ff,MUTED=0xffa5bbcf,CYAN=0xff28e2dd;
+    private static final int VOID=0xFF04090F,BG=0xFF070E17,BG2=0xFF0A1420,SURFACE=0xFF0E1E2E,SURFACE2=0xFF122639,RAISED=0xFF163149,
+            TEXT=0xFFEAF6FF,MUTED=0xFF93ADC4,MUTED2=0xFF6F8BA3,ACCENT=0xFF38F0DD,ACCENT_DEEP=0xFF1CC7D2,
+            MINT=0xFF7CF6C8,IRIS=0xFF8F7CFF,AMBER=0xFFFFC978,CORAL=0xFFFF8E9A,
+            LINE=0x241DBEDE,LINE_STRONG=0x421DBEDE,GLASS=0xA00E1E2E,CYAN=ACCENT;
+    private static final int[] AVATAR_TONES={ACCENT,MINT,IRIS,AMBER};
     private final Activity activity;
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final ExecutorService worker=Executors.newSingleThreadExecutor(r->{Thread t=new Thread(r,"uzelio-chat-ui");t.setDaemon(true);return t;});
@@ -68,55 +74,70 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
     private String selected="",signature="";
     private boolean pending;
     private volatile boolean closed;
-    public MessengerScreen(Activity activity,Bundle saved){super(activity);this.activity=activity;setOrientation(VERTICAL);setBackgroundColor(BG);setPadding(dp(4),dp(6),dp(4),dp(4));
+    public MessengerScreen(Activity activity,Bundle saved){super(activity);this.activity=activity;setOrientation(VERTICAL);setBackground(screenBackground());setPadding(dp(10),dp(10),dp(10),dp(10));
         if(saved!=null){selected=saved.getString("chat.selected","");Bundle all=saved.getBundle("chat.drafts");if(all!=null)for(String k:all.keySet())drafts.put(k,all.getString(k,""));}
-        listTools=column();LinearLayout actions=row();TextView sectionTitle=text(R.string.chat_title,24,TEXT);actions.addView(sectionTitle,new LayoutParams(0,-2,1));Button add=button(R.string.chat_add,()->addContact()),invite=button(R.string.chat_invite,()->invitation());add.setText("+");add.setContentDescription(getResources().getString(R.string.chat_add));actions.addView(add,new LayoutParams(dp(48),dp(48)));listTools.addView(actions);invitationButton=invite;
-        status=text(R.string.chat_loading,13,MUTED);status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);addView(status);retry=button(R.string.chat_retry,()->{if(service==null){AndroidMessenger.chats(activity);refresh();}else work(()->service.retryNow());});addView(retry);retry.setVisibility(GONE);
-        list=column();search=input(R.string.chat_search);search.setSingleLine(true);listTools.addView(search);list.addView(listTools);contactScroll=new ScrollView(activity);contactScroll.setFillViewport(true);contactScroll.addView(list);addView(contactScroll,new LayoutParams(-1,0,1));
-        thread=column();LinearLayout title=row();Button back=button(R.string.chat_back,()->backToContacts());back.setText("‹");back.setTextSize(26);back.setContentDescription(getResources().getString(R.string.chat_back));title.addView(back,new LayoutParams(dp(48),dp(48)));activeAvatar=new TextView(activity);activeAvatar.setTextColor(TEXT);activeAvatar.setTextSize(16);activeAvatar.setGravity(Gravity.CENTER);activeAvatar.setTypeface(null,Typeface.BOLD);activeAvatar.setBackground(surface(0xff247675));LayoutParams avatarSize=new LayoutParams(dp(36),dp(36));avatarSize.setMarginEnd(dp(8));title.addView(activeAvatar,avatarSize);heading=text(R.string.chat_select,18,TEXT);title.addView(heading,new LayoutParams(0,-2,1));callButton=button("Позвонить",this::startCall);callButton.setTextSize(12);callButton.setPadding(dp(8),0,dp(8),0);LayoutParams callButtonParams=new LayoutParams(-2,dp(48));callButtonParams.setMarginStart(dp(4));title.addView(callButton,callButtonParams);thread.addView(title);thread.addView(text(R.string.chat_private,12,MUTED));
-        callPanel=column();callPanel.setPadding(dp(12),dp(6),dp(12),dp(8));callPanel.setBackground(surface(0xff123b47));callPanel.setVisibility(GONE);
+        listTools=column();LinearLayout actions=row();TextView sectionTitle=text(R.string.chat_title,24,TEXT);sectionTitle.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));sectionTitle.setLetterSpacing(-0.02f);actions.addView(sectionTitle,new LayoutParams(0,-2,1));Button add=button(R.string.chat_add,()->addContact()),invite=button(R.string.chat_invite,()->invitation());add.setText("+");add.setTextSize(22);add.setContentDescription(getResources().getString(R.string.chat_add));add.setBackground(circleSurface(true));actions.addView(add,new LayoutParams(dp(48),dp(48)));listTools.addView(actions);invitationButton=invite;
+        status=text(R.string.chat_loading,12,MUTED);status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);addView(status);retry=button(R.string.chat_retry,()->{if(service==null){AndroidMessenger.chats(activity);refresh();}else work(()->service.retryNow());});addView(retry);retry.setVisibility(GONE);
+        list=column();search=input(R.string.chat_search);search.setSingleLine(true);search.setBackground(fieldPill());search.setPadding(dp(16),dp(10),dp(16),dp(10));listTools.addView(search);list.addView(listTools);contactScroll=new ScrollView(activity);contactScroll.setFillViewport(true);contactScroll.addView(list);addView(contactScroll,new LayoutParams(-1,0,1));
+        thread=column();LinearLayout title=row();title.setPadding(0,0,0,dp(4));Button back=button(R.string.chat_back,()->backToContacts());back.setText("‹");back.setTextSize(26);back.setContentDescription(getResources().getString(R.string.chat_back));back.setBackground(circleSurface(false));title.addView(back,new LayoutParams(dp(44),dp(44)));activeAvatar=new TextView(activity);activeAvatar.setTextColor(ACCENT);activeAvatar.setTextSize(15);activeAvatar.setGravity(Gravity.CENTER);activeAvatar.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));activeAvatar.setBackground(avatarBackground(ACCENT));LayoutParams avatarSize=new LayoutParams(dp(38),dp(38));avatarSize.setMarginEnd(dp(10));title.addView(activeAvatar,avatarSize);heading=text(R.string.chat_select,18,TEXT);heading.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));title.addView(heading,new LayoutParams(0,-2,1));callButton=button("Позвонить",this::startCall);callButton.setTextSize(12);callButton.setPadding(dp(10),0,dp(10),0);callButton.setBackground(tintPill(MINT));callButton.setTextColor(MINT);LayoutParams callButtonParams=new LayoutParams(-2,dp(44));callButtonParams.setMarginStart(dp(4));title.addView(callButton,callButtonParams);thread.addView(title);
+        LinearLayout privateRow=row();privateRow.setPadding(dp(2),0,0,dp(6));View privateDot=led(MINT);LayoutParams privateDotParams=new LayoutParams(dp(6),dp(6));privateDotParams.setMarginEnd(dp(6));privateRow.addView(privateDot,privateDotParams);privateRow.addView(text(R.string.chat_private,11,MUTED2));thread.addView(privateRow);
+        callPanel=column();callPanel.setPadding(dp(14),dp(10),dp(14),dp(10));callPanel.setBackground(glassCard(20));callPanel.setVisibility(GONE);
         callState=text(R.string.chat_private,14,TEXT);callState.setText("");callActions=row();
-        callAccept=button("Принять",this::acceptCall);callReject=button("Отклонить",this::rejectCall);callEnd=button("Завершить",this::endCall);
+        callAccept=button("Принять",this::acceptCall);callAccept.setBackground(tintPill(MINT));callAccept.setTextColor(MINT);callReject=button("Отклонить",this::rejectCall);callReject.setBackground(tintPill(CORAL));callReject.setTextColor(CORAL);callEnd=button("Завершить",this::endCall);callEnd.setBackground(tintPill(RAISED));callEnd.setTextColor(TEXT);
         callActions.addView(callAccept,callActionParams());callActions.addView(callReject,callActionParams());callActions.addView(callEnd,callActionParams());
         callPanel.addView(callState);callPanel.addView(callActions);thread.addView(callPanel,new LayoutParams(-1,-2));
-        messages=column();ScrollView history=new ScrollView(activity);history.setFillViewport(true);history.addView(messages);thread.addView(history,new LayoutParams(-1,0,1));
-        LinearLayout composer=row();draft=input(R.string.chat_message);draft.setMinLines(1);draft.setMaxLines(4);composer.addView(draft,new LayoutParams(0,-2,1));
-        attach=button(R.string.chat_attach,this::pickFile);attach.setText("📎");attach.setTextSize(18);attach.setContentDescription(getResources().getString(R.string.chat_attach));
-        LayoutParams attachParams=new LayoutParams(dp(44),dp(44));attachParams.setMarginStart(dp(4));composer.addView(attach,attachParams);
-        voice=button(R.string.chat_voice_record,this::toggleVoice);voice.setText("🎤");voice.setTextSize(18);voice.setContentDescription(getResources().getString(R.string.chat_voice_record));
-        LayoutParams voiceParams=new LayoutParams(dp(44),dp(44));voiceParams.setMarginStart(dp(4));composer.addView(voice,voiceParams);
-        send=button(R.string.chat_send,()->send());send.setText("➤");send.setContentDescription(getResources().getString(R.string.chat_send));GradientDrawable primary=new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{0xff58f3e9,0xff1cc7d2});primary.setCornerRadius(dp(12));send.setBackground(primary);send.setTextColor(BG);composer.addView(send,new LayoutParams(dp(48),dp(48)));thread.addView(composer);thread.addView(text(R.string.chat_waiting,12,MUTED));addView(thread,new LayoutParams(-1,0,1));
+        messages=column();messages.setPadding(0,dp(10),0,dp(6));ScrollView history=new ScrollView(activity);history.setFillViewport(true);history.setClipToPadding(false);history.addView(messages);thread.addView(history,new LayoutParams(-1,0,1));
+        LinearLayout composer=row();composer.setGravity(Gravity.CENTER_VERTICAL);composer.setBackground(composerBackground());composer.setPadding(dp(4),dp(4),dp(4),dp(4));draft=input(R.string.chat_message);draft.setMinLines(1);draft.setMaxLines(4);draft.setBackground(null);draft.setPadding(dp(10),dp(8),dp(10),dp(8));composer.addView(draft,new LayoutParams(0,-2,1));
+        attach=button(R.string.chat_attach,this::pickFile);attach.setText("📎");attach.setTextSize(18);attach.setContentDescription(getResources().getString(R.string.chat_attach));attach.setBackground(circleSurface(false));LayoutParams attachParams=new LayoutParams(dp(44),dp(44));attachParams.setMarginStart(dp(2));composer.addView(attach,attachParams);
+        voice=button(R.string.chat_voice_record,this::toggleVoice);voice.setText("🎤");voice.setTextSize(18);voice.setContentDescription(getResources().getString(R.string.chat_voice_record));voice.setBackground(circleSurface(false));LayoutParams voiceParams=new LayoutParams(dp(44),dp(44));voiceParams.setMarginStart(dp(2));composer.addView(voice,voiceParams);
+        send=button(R.string.chat_send,()->send());send.setText("➤");send.setContentDescription(getResources().getString(R.string.chat_send));send.setBackground(sendCircle());send.setTextColor(BG);composer.addView(send,new LayoutParams(dp(46),dp(46)));
+        LayoutParams composerParams=new LayoutParams(-1,-2);composerParams.topMargin=dp(8);thread.addView(composer,composerParams);
+        TextView waiting=text(R.string.chat_waiting,11,MUTED2);waiting.setGravity(Gravity.CENTER);waiting.setPadding(0,dp(6),0,dp(4));thread.addView(waiting);addView(thread,new LayoutParams(-1,0,1));
         draft.addTextChangedListener(watch(()->{drafts.put(selected,draft.getText().toString());send.setEnabled(service!=null&&!selected.isEmpty()&&!draft.getText().toString().trim().isEmpty());}));search.addTextChangedListener(watch(this::renderContacts));draft.setText(drafts.getOrDefault(selected,""));send.setEnabled(false);showConversation();renderContacts();AndroidMessenger.setCallHandler(callHandler);renderCall();
     }
     public boolean backToContacts(){if(selected.isEmpty())return false;if(call!=null)endCall();if(recorder!=null)finishRecording(false);stopPlayback();drafts.put(selected,draft.getText().toString());selected="";showConversation();return true;}
     public void saveState(Bundle out){drafts.put(selected,draft.getText().toString());out.putString("chat.selected",selected);Bundle all=new Bundle();for(var entry:drafts.entrySet())all.putString(entry.getKey(),entry.getValue());out.putBundle("chat.drafts",all);}
     private TextWatcher watch(Runnable r){return new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int c,int f){}public void onTextChanged(CharSequence s,int a,int b,int c){r.run();}public void afterTextChanged(Editable e){}};}
-    private void showConversation(){boolean open=!selected.isEmpty();contactScroll.setVisibility(open?GONE:VISIBLE);thread.setVisibility(open?VISIBLE:GONE);if(open)draft.setText(drafts.getOrDefault(selected,""));updateComposer();}
+    private void showConversation(){boolean open=!selected.isEmpty();contactScroll.setVisibility(open?GONE:VISIBLE);thread.setVisibility(open?VISIBLE:GONE);if(open)draft.setText(drafts.getOrDefault(selected,""));reveal(open?thread:contactScroll);updateComposer();}
     public void refresh(){if(closed||pending)return;pending=true;String id=selected;submit(()->{try{if(service==null)service=AndroidMessenger.chats(activity).get();var next=service.contacts();var history=id.isEmpty()?java.util.List.<ChatRepository.Message>of():service.history(id);postUi(()->{if(closed)return;pending=false;contacts=next;for(var c:contacts)if(c.id().equals(selected)){heading.setText(c.name());activeAvatar.setText(initials(c.name()));}if(recorder==null)status.setVisibility(GONE);retry.setVisibility(GONE);renderContacts();if(selected.equals(id))renderHistory(history);send.setEnabled(!selected.isEmpty()&&!draft.getText().toString().trim().isEmpty());updateComposer();});}catch(Exception e){postUi(()->{pending=false;status.setVisibility(VISIBLE);status.setText(R.string.chat_error);retry.setVisibility(VISIBLE);});}});}
-    private void renderContacts(){while(list.getChildCount()>1)list.removeViewAt(1);String q=search.getText().toString().trim().toLowerCase(Locale.ROOT);int count=0;for(var c:contacts){if(!c.name().toLowerCase(Locale.ROOT).contains(q))continue;count++;LinearLayout item=row();item.setPadding(dp(10),dp(14),dp(10),dp(14));item.setBackground(surface(SURFACE));item.setElevation(dp(2));TextView avatar=new TextView(activity);avatar.setText(initials(c.name()));avatar.setTextColor(TEXT);avatar.setTextSize(16);avatar.setTypeface(null,Typeface.BOLD);avatar.setGravity(Gravity.CENTER);avatar.setBackground(surface(0xff247675));item.addView(avatar,new LayoutParams(dp(46),dp(46)));LinearLayout copy=column();copy.setPadding(dp(12),0,0,0);TextView name=new TextView(activity);name.setText(c.name());name.setTextColor(TEXT);name.setTextSize(14);name.setTypeface(null,Typeface.BOLD);copy.addView(name);copy.addView(text(R.string.chat_personal,12,MUTED));item.addView(copy,new LayoutParams(0,-2,1));item.setContentDescription(c.name());item.setFocusable(true);item.setOnClickListener(v->{if(call!=null&&!call.contactId().equals(c.id()))endCall();selected=c.id();heading.setText(c.name());activeAvatar.setText(initials(c.name()));signature="";showConversation();refresh();});LayoutParams lp=new LayoutParams(-1,-2);lp.topMargin=dp(8);list.addView(item,lp);}if(count==0)list.addView(text(q.isEmpty()?R.string.chat_empty:R.string.chat_not_found,16,MUTED));View spacer=new View(activity);list.addView(spacer,new LayoutParams(-1,0,1));TextView footer=text(R.string.chat_storage,12,MUTED);footer.setPadding(dp(14),dp(18),dp(14),dp(14));footer.setBackground(surface(SURFACE));LayoutParams lp=new LayoutParams(-1,-2);lp.topMargin=dp(18);list.addView(footer,lp);list.addView(invitationButton,new LayoutParams(-1,-2));}
+    private void renderContacts(){while(list.getChildCount()>1)list.removeViewAt(1);String q=search.getText().toString().trim().toLowerCase(Locale.ROOT);int count=0;for(var c:contacts){if(!c.name().toLowerCase(Locale.ROOT).contains(q))continue;int tone=AVATAR_TONES[count%AVATAR_TONES.length];count++;LinearLayout item=row();item.setPadding(dp(10),dp(12),dp(12),dp(12));item.setBackground(contactRow());item.setElevation(dp(2));TextView avatar=new TextView(activity);avatar.setText(initials(c.name()));avatar.setTextColor(tone);avatar.setTextSize(16);avatar.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));avatar.setGravity(Gravity.CENTER);avatar.setBackground(avatarBackground(tone));item.addView(avatar,new LayoutParams(dp(44),dp(44)));LinearLayout copy=column();copy.setPadding(dp(12),0,0,0);TextView name=new TextView(activity);name.setText(c.name());name.setTextColor(TEXT);name.setTextSize(15);name.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));copy.addView(name);TextView preview=text(R.string.chat_personal,12,MUTED2);preview.setPadding(0,dp(2),0,0);copy.addView(preview);item.addView(copy,new LayoutParams(0,-2,1));item.setContentDescription(c.name());item.setFocusable(true);item.setOnClickListener(v->{press(v);if(call!=null&&!call.contactId().equals(c.id()))endCall();selected=c.id();heading.setText(c.name());activeAvatar.setText(initials(c.name()));signature="";showConversation();refresh();});LayoutParams lp=new LayoutParams(-1,-2);lp.topMargin=dp(8);list.addView(item,lp);}if(count==0){TextView empty=text(q.isEmpty()?R.string.chat_empty:R.string.chat_not_found,15,MUTED2);empty.setGravity(Gravity.CENTER);empty.setPadding(dp(20),dp(28),dp(20),dp(28));list.addView(empty);}View spacer=new View(activity);list.addView(spacer,new LayoutParams(-1,0,1));TextView footer=text(R.string.chat_storage,11,MUTED);footer.setPadding(dp(14),dp(14),dp(14),dp(14));footer.setBackground(privacyCard());footer.setLineSpacing(dp(2),1f);LayoutParams footerParams=new LayoutParams(-1,-2);footerParams.topMargin=dp(16);list.addView(footer,footerParams);LayoutParams inviteParams=new LayoutParams(-1,-2);inviteParams.topMargin=dp(8);list.addView(invitationButton,inviteParams);}
     private static String initials(String name){StringBuilder b=new StringBuilder();for(String part:name.trim().split("\\s+")){if(!part.isEmpty())b.appendCodePoint(part.codePointAt(0));if(b.codePointCount(0,b.length())==2)break;}return b.toString().toUpperCase(Locale.ROOT);}
     private void renderHistory(java.util.List<ChatRepository.Message> history){
         String next=history.toString();if(signature.equals(next))return;signature=next;messages.removeAllViews();
-        if(history.isEmpty())messages.addView(text(R.string.chat_history_empty,15,MUTED));
+        if(history.isEmpty()){TextView empty=text(R.string.chat_history_empty,14,MUTED2);empty.setGravity(Gravity.CENTER);empty.setPadding(0,dp(28),0,dp(28));messages.addView(empty);return;}
         for(var m:history){
-            LinearLayout line=row();line.setGravity(m.outgoing()?Gravity.END:Gravity.START);TextView bubble=new TextView(activity);bubble.setTextColor(TEXT);bubble.setTextSize(16);
-            String metadata=new SimpleDateFormat("HH:mm",Locale.getDefault()).format(new Date(m.timeMillis()))+(m.outgoing()?" · "+getResources().getString(switch(m.status()){case "delivered"->R.string.chat_delivered;case "sent"->R.string.chat_sent;default->R.string.chat_queued;}):"");
+            LinearLayout line=row();line.setGravity(m.outgoing()?Gravity.END:Gravity.START);Bubble bubble=new Bubble(activity,dp(292));bubble.setPadding(dp(14),dp(10),dp(14),dp(9));bubble.setBackground(bubbleBackground(m.outgoing()));
+            String time=new SimpleDateFormat("HH:mm",Locale.getDefault()).format(new Date(m.timeMillis()));
+            String state=getResources().getString(switch(m.status()){case "delivered"->R.string.chat_delivered;case "sent"->R.string.chat_sent;default->R.string.chat_queued;});
+            String meta=m.outgoing()?time+" · "+("queued".equals(m.status())?state:"✓ "+state):time;
             ChatRepository.Attachment a=m.attachment();
-            String first=a==null?m.text():a.name();
-            String second;
-            if(a==null)second=metadata;
-            else{
-                int action=a.mime()!=null&&a.mime().startsWith("audio/")?R.string.chat_play:R.string.chat_save;
-                second=getResources().getString(action)+" · "+Formatter.formatFileSize(activity,a.size())+" · "+metadata;
-                bubble.setOnClickListener(v->openAttachment(m));
-                bubble.setFocusable(true);
-                bubble.setContentDescription(a.name()+", "+second);
+            if(a==null){
+                TextView body=new TextView(activity);body.setText(m.text());body.setTextColor(TEXT);body.setTextSize(15);body.setLineSpacing(dp(2),1f);bubble.addView(body);bubble.addView(stamp(meta));
+            }else{
+                int action=a.mime()!=null&&a.mime().startsWith("audio/")?R.string.chat_play:R.string.chat_save;String actionText=getResources().getString(action);
+                String second=actionText+" · "+Formatter.formatFileSize(activity,a.size())+" · "+meta;
+                LinearLayout card=row();card.setBackground(fileCard());card.setPadding(dp(8),dp(8),dp(8),dp(8));
+                TextView icon=new TextView(activity);icon.setText(a.mime()!=null&&a.mime().startsWith("audio/")?"♪":"▤");icon.setTextSize(18);icon.setTextColor(ACCENT);icon.setGravity(Gravity.CENTER);icon.setBackground(fileIcon());card.addView(icon,new LayoutParams(dp(36),dp(36)));
+                LinearLayout copy=column();copy.setPadding(dp(10),0,0,0);TextView fileName=new TextView(activity);fileName.setText(a.name());fileName.setTextColor(TEXT);fileName.setTextSize(13);fileName.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));fileName.setMaxLines(1);fileName.setEllipsize(android.text.TextUtils.TruncateAt.END);copy.addView(fileName);TextView fileMeta=new TextView(activity);fileMeta.setText(Formatter.formatFileSize(activity,a.size()));fileMeta.setTextColor(MUTED2);fileMeta.setTextSize(10);copy.addView(fileMeta);card.addView(copy,new LayoutParams(0,-2,1));bubble.addView(card,new LayoutParams(-1,-2));
+                TextView actionView=new TextView(activity);actionView.setText(actionText);actionView.setTextColor(ACCENT);actionView.setTextSize(11);actionView.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));actionView.setPadding(0,dp(6),0,0);bubble.addView(actionView);bubble.addView(stamp(meta));
+                bubble.setOnClickListener(v->openAttachment(m));bubble.setFocusable(true);bubble.setContentDescription(a.name()+", "+second);
             }
-            android.text.SpannableString value=new android.text.SpannableString(first+"\n"+second);int start=first.length()+1;
-            value.setSpan(new android.text.style.AbsoluteSizeSpan(11,true),start,value.length(),android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-            value.setSpan(new android.text.style.ForegroundColorSpan(0xff9abac9),start,value.length(),android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-            value.setSpan(new android.text.style.AlignmentSpan.Standard(android.text.Layout.Alignment.ALIGN_OPPOSITE),start,value.length(),android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);bubble.setText(value);
-            bubble.setPadding(dp(14),dp(10),dp(14),dp(10));bubble.setBackground(surface(m.outgoing()?0xff16505c:SURFACE));bubble.setMaxWidth(dp(285));LayoutParams lp=new LayoutParams(-2,-2);lp.topMargin=dp(8);lp.bottomMargin=dp(2);line.addView(bubble,lp);messages.addView(line);
+            LayoutParams lp=new LayoutParams(-2,-2);lp.topMargin=dp(8);lp.bottomMargin=dp(2);line.addView(bubble,lp);messages.addView(line);
+        }
+    }
+    private TextView stamp(String value){
+        TextView stamp=new TextView(activity);stamp.setTextSize(11);stamp.setTextColor(MUTED2);stamp.setGravity(Gravity.END);stamp.setPadding(0,dp(3),0,0);
+        android.text.SpannableString text=new android.text.SpannableString(value);int tick=value.indexOf('✓');
+        if(tick>=0)text.setSpan(new android.text.style.ForegroundColorSpan(MINT),tick,tick+1,android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        stamp.setText(text);return stamp;
+    }
+    private static final class Bubble extends LinearLayout {
+        private final int maximum;
+        Bubble(Context context,int maximum){super(context);this.maximum=maximum;setOrientation(VERTICAL);}
+        @Override protected void onMeasure(int widthMeasureSpec,int heightMeasureSpec){
+            int parent=MeasureSpec.getSize(widthMeasureSpec);
+            int width=MeasureSpec.makeMeasureSpec(Math.min(maximum,parent),MeasureSpec.AT_MOST);
+            super.onMeasure(width,heightMeasureSpec);
         }
     }
     private void send(){if(closed)return;String value=draft.getText().toString().trim(),id=selected;if(value.isEmpty()||service==null||id.isEmpty())return;send.setEnabled(false);submit(()->{try{service.send(id,value);postUi(()->{if(selected.equals(id)&&draft.getText().toString().trim().equals(value)){draft.setText("");drafts.put(id,"");}else if(drafts.getOrDefault(id,"").trim().equals(value))drafts.put(id,"");signature="";refresh();});}catch(Exception e){postUi(()->{status.setVisibility(VISIBLE);status.setText(R.string.chat_error);retry.setVisibility(VISIBLE);send.setEnabled(true);});}});}
@@ -384,7 +405,9 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
             callPanel.setVisibility(GONE);callAccept.setVisibility(GONE);callReject.setVisibility(GONE);callEnd.setVisibility(GONE);return;
         }
         CallSession.State state=session.state();
+        boolean entering=callPanel.getVisibility()!=VISIBLE;
         callPanel.setVisibility(VISIBLE);callAccept.setVisibility(GONE);callReject.setVisibility(GONE);callEnd.setVisibility(GONE);
+        if(entering)reveal(callPanel);
         if(state==CallSession.State.CALLING){
             callState.setText("Звоним…");callEnd.setText("Завершить");callEnd.setVisibility(VISIBLE);
         }else if(state==CallSession.State.RINGING){
@@ -407,13 +430,34 @@ public final class MessengerScreen extends LinearLayout implements AutoCloseable
     private interface Action{void run()throws Exception;}
     private void work(Action action){if(closed)return;submit(()->{try{if(service==null)service=AndroidMessenger.chats(activity).get();action.run();postUi(this::refresh);}catch(Exception e){postUi(()->{status.setVisibility(VISIBLE);status.setText(R.string.chat_action_error);retry.setVisibility(VISIBLE);Toast.makeText(activity,R.string.chat_action_error,Toast.LENGTH_LONG).show();});}});}
     private int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
+    private static int withAlpha(int color,int alpha){return (color&0x00ffffff)|(alpha<<24);}
+    private boolean motionEnabled(){try{return Settings.Global.getFloat(activity.getContentResolver(),Settings.Global.ANIMATOR_DURATION_SCALE,1f)!=0f;}catch(RuntimeException ignored){return true;}}
+    private void press(View view){if(view==null||!motionEnabled())return;ValueAnimator press=ValueAnimator.ofFloat(.96f,1f);press.setDuration(150);press.setInterpolator(new android.view.animation.DecelerateInterpolator());press.addUpdateListener(a->{float scale=(float)a.getAnimatedValue();view.setScaleX(scale);view.setScaleY(scale);});press.start();}
+    private void reveal(View view){if(view==null)return;if(!motionEnabled()||!view.isAttachedToWindow()){view.setAlpha(1f);view.setTranslationY(0f);return;}view.setAlpha(0f);view.setTranslationY(dp(12));ValueAnimator appear=ValueAnimator.ofFloat(0f,1f);appear.setDuration(380);appear.setInterpolator(new android.view.animation.DecelerateInterpolator());appear.addUpdateListener(a->{float value=(float)a.getAnimatedValue();view.setAlpha(value);view.setTranslationY((1f-value)*dp(12));});appear.start();}
     private LinearLayout column(){LinearLayout v=new LinearLayout(activity);v.setOrientation(VERTICAL);return v;}
     private LinearLayout row(){LinearLayout v=new LinearLayout(activity);v.setGravity(Gravity.CENTER_VERTICAL);return v;}
     private TextView text(int id,int size,int color){TextView v=new TextView(activity);v.setText(id);v.setTextSize(size);v.setTextColor(color);v.setPadding(0,dp(6),0,dp(6));return v;}
-    private EditText input(int hint){EditText v=new EditText(activity);v.setTextColor(TEXT);v.setHintTextColor(MUTED);v.setHint(hint);v.setTextSize(16);v.setPadding(dp(12),dp(8),dp(12),dp(8));v.setBackground(surface(SURFACE));v.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);return v;}
+    private View led(int tone){View v=new View(activity);v.setBackground(dot(tone));return v;}
+    private EditText input(int hint){EditText v=new EditText(activity);v.setTextColor(TEXT);v.setHintTextColor(MUTED2);v.setHint(hint);v.setTextSize(15);v.setPadding(dp(14),dp(10),dp(14),dp(10));v.setBackground(fieldSurface());v.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);return v;}
     private Button button(int title,Runnable action){return button(getResources().getString(title),action);}
-    private Button button(String title,Runnable action){Button b=new Button(activity){@Override public void setEnabled(boolean enabled){super.setEnabled(enabled);setAlpha(enabled?1f:.5f);}};b.setText(title);styleButton(b);b.setOnClickListener(v->action.run());return b;}
-    private void styleButton(Button b){b.setTextColor(CYAN);b.setTextSize(13);b.setAllCaps(false);b.setMinHeight(dp(48));b.setBackground(surface(SURFACE));b.setElevation(dp(2));}
-    private GradientDrawable surface(int color){GradientDrawable d=new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{color,color==SURFACE?0xff19374e:color});d.setCornerRadius(dp(16));d.setStroke(dp(1),0xff36546c);return d;}
+    private Button button(String title,Runnable action){Button b=new Button(activity){@Override public void setEnabled(boolean enabled){super.setEnabled(enabled);setAlpha(enabled?1f:.5f);}};b.setText(title);styleButton(b);b.setOnClickListener(v->{press(v);action.run();});return b;}
+    private void styleButton(Button b){b.setTextColor(ACCENT);b.setTextSize(12);b.setAllCaps(false);b.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));b.setMinHeight(dp(44));b.setBackground(secondaryPill());b.setElevation(0);b.setPadding(dp(14),dp(8),dp(14),dp(8));}
+    private GradientDrawable rounded(int color,int radius,int strokeColor){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));if(strokeColor!=0)d.setStroke(Math.max(1,dp(1)),strokeColor);return d;}
+    private GradientDrawable circleSurface(boolean accent){GradientDrawable d=new GradientDrawable();d.setColor(accent?withAlpha(ACCENT,0x22):withAlpha(TEXT,0x08));d.setCornerRadius(dp(999));d.setStroke(Math.max(1,dp(1)),accent?withAlpha(ACCENT,0x55):LINE);return d;}
+    private GradientDrawable tintPill(int tone){GradientDrawable d=new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{withAlpha(tone,0x22),withAlpha(tone,0x0C)});d.setCornerRadius(dp(999));d.setStroke(Math.max(1,dp(1)),withAlpha(tone,0x66));return d;}
+    private GradientDrawable secondaryPill(){return rounded(0xC0122639,999,LINE_STRONG);}
+    private GradientDrawable fieldSurface(){return rounded(SURFACE2,18,LINE);}
+    private GradientDrawable fieldPill(){return rounded(0xC0122639,999,LINE);}
+    private GradientDrawable screenBackground(){GradientDrawable d=new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{0xA00A1420,0xA0070E17});d.setCornerRadius(dp(28));d.setStroke(Math.max(1,dp(1)),LINE);return d;}
+    private GradientDrawable glassCard(int radius){return rounded(GLASS,radius,LINE);}
+    private GradientDrawable avatarBackground(int tone){return rounded(withAlpha(tone,0x26),14,withAlpha(tone,0x66));}
+    private GradientDrawable contactRow(){GradientDrawable d=new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{0xC0122639,0xB00E1E2E});d.setCornerRadius(dp(18));d.setStroke(Math.max(1,dp(1)),LINE);return d;}
+    private GradientDrawable bubbleBackground(boolean outgoing){GradientDrawable d=new GradientDrawable();d.setColor(outgoing?withAlpha(ACCENT,0x29):SURFACE);float r=dp(16),small=dp(6);d.setCornerRadii(outgoing?new float[]{r,r,r,r,small,small,r,r}:new float[]{r,r,r,r,r,r,small,small});d.setStroke(Math.max(1,dp(1)),outgoing?withAlpha(ACCENT,0x66):LINE);return d;}
+    private GradientDrawable fileCard(){return rounded(0x7306101A,12,LINE);}
+    private GradientDrawable fileIcon(){return rounded(withAlpha(ACCENT,0x18),10,withAlpha(ACCENT,0x4D));}
+    private GradientDrawable composerBackground(){GradientDrawable d=new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{0xCC122639,0xCC0E1E2E});d.setCornerRadius(dp(999));d.setStroke(Math.max(1,dp(1)),LINE);return d;}
+    private GradientDrawable sendCircle(){GradientDrawable d=new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{0xFF8BFBD4,ACCENT,ACCENT_DEEP});d.setCornerRadius(dp(999));return d;}
+    private GradientDrawable privacyCard(){return rounded(withAlpha(MINT,0x0B),16,withAlpha(MINT,0x33));}
+    private GradientDrawable dot(int tone){GradientDrawable d=new GradientDrawable();d.setShape(GradientDrawable.OVAL);d.setColor(tone);return d;}
     @Override public void close(){closed=true;AndroidMessenger.clearCallHandler(callHandler);handler.removeCallbacks(hideFailedCall);CallSession active=call;call=null;if(active!=null)active.close();handler.removeCallbacks(voiceWatchdog);MediaRecorder current=recorder;recorder=null;if(current!=null){try{current.stop();}catch(RuntimeException ignored){}try{current.release();}catch(RuntimeException ignored){}}voiceContact="";attachmentContact="";if(voiceFile!=null){voiceFile.delete();voiceFile=null;}stopPlayback();handler.removeCallbacksAndMessages(null);worker.shutdownNow();}
 }

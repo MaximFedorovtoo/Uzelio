@@ -4,6 +4,7 @@ import org.uzel.messenger.MessengerRuntime;
 import org.uzel.messenger.chat.ChatRepository;
 import org.uzel.messenger.chat.ChatService;
 import org.uzel.messenger.chat.ChatTransport;
+import org.uzel.messenger.chat.ChatWire;
 import org.uzel.app.NodeController;
 import org.uzel.app.MainActivity;
 import org.uzel.app.UzelioApplication;
@@ -43,6 +44,13 @@ public final class AndroidMessenger {
                     ChatNotifications.show(app,service.contactName(contactId),message.text().isBlank()&&message.attachment()!=null?"Файл: "+message.attachment().name():message.text());
                 }
                 @Override public void call(String contactId,int kind,String callId,String sdp){
+                    // The call UI lives in the Chats screen; when that screen is not in front the
+                    // system notification rings instead. Message notifications are untouched.
+                    // Only visible Chats counts: on any other tab the call panel cannot be seen.
+                    if(kind==ChatWire.CALL_OFFER){
+                        if(MainActivity.visible&&MainActivity.activeTab==4)ChatNotifications.cancelIncomingCall(app);
+                        else ChatNotifications.showIncomingCall(app,service.contactName(contactId));
+                    }else if(kind==ChatWire.CALL_END)ChatNotifications.cancelIncomingCall(app);
                     CallHandler handler=callHandler;
                     if(handler==null)return;
                     try{handler.call(contactId,kind,callId,sdp);}catch(RuntimeException ignored){/* UI only */}

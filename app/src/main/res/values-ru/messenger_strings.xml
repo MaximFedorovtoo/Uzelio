@@ -55,4 +55,12 @@
     <string name="chat_saved">Сохранено в Загрузки/Uzelio</string>
     <string name="chat_save_failed">Не удалось сохранить файл.</string>
     <string name="chat_play_failed">Не удалось воспроизвести аудио.</string>
+    <string name="chat_link_channel">Связь с чатами</string>
+    <string name="chat_link_title">Uzelio на связи</string>
+    <string name="chat_link_text">Сообщения и звонки приходят, когда приложение свёрнуто.</string>
+    <string name="chat_link_stop">Остановить</string>
+    <string name="call_channel">Входящие звонки</string>
+    <string name="call_incoming">Входящий звонок</string>
+    <string name="call_accept">Принять</string>
+    <string name="call_decline">Отклонить</string>
 </resources>
