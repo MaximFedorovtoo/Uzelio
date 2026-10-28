@@ -164,6 +164,10 @@ public final class PeerArtwork extends View {
     }
 
     private void drawNetwork(Canvas canvas) {
+        // An opaque plate keeps the artwork readable on any translucent card.
+        fill.setColor(0xFF0E1E2E);
+        fill.setShader(null);
+        canvas.drawCircle(50, 50, 49, fill);
         glow.setShader(haloShader);
         canvas.drawCircle(50, 50, 49, glow);
         glow.setShader(null);
@@ -214,13 +218,6 @@ public final class PeerArtwork extends View {
         drawNode(canvas, 50, 81, 3.2f);
         drawNode(canvas, 28, 64, 3.2f);
         drawNode(canvas, 26, 36, 3.2f);
-
-        // Small specular highlight gives the 80dp artwork a polished, dimensional finish.
-        stroke.setColor(0x80ffffff);
-        stroke.setStrokeWidth(1.8f);
-        path.reset();
-        path.moveTo(32, 22); path.quadTo(40, 17, 47, 16);
-        canvas.drawPath(path, stroke);
     }
 
     private void drawNode(Canvas canvas, float x, float y, float radius) {

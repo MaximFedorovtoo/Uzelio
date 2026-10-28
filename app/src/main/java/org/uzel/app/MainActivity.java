@@ -262,7 +262,7 @@ public class MainActivity extends Activity {
     }
     private GradientDrawable glassCard(int radius){return rounded(GLASS,radius,LINE);}
     private GradientDrawable heroCard(){
-        GradientDrawable d=new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{0xC00E1E2E,0x9A0A1420});
+        GradientDrawable d=new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{0xFF0E1E2E,0xFF0A1420});
         d.setCornerRadius(dp(24));d.setStroke(Math.max(1,dp(1)),LINE_STRONG);return d;
     }
     private android.graphics.drawable.Drawable primaryPill(){
@@ -407,7 +407,7 @@ public class MainActivity extends Activity {
         LinearLayout actions=new LinearLayout(this);c.addView(actions);
         vpnButton=button(actions,s("choose_node"),false,()->{NodeController.Snapshot x=controller.snapshot();if(x.vpnConnected||isConnecting(x)){connectionRequested=false;controller.disconnect();refresh();}else if(connectionFailed(x)&&!connectionPeer.isEmpty())connect(connectionPeer);else showTab(1);});
         sharingButton=button(actions,getString(R.string.ui_share),true,()->{NodeController.Snapshot x=controller.snapshot();if(x.sharing)controller.stopSharing();else{requestNotifications();controller.startSharing();}refresh();});
-        vpnButton.setAutoSizeTextTypeUniformWithConfiguration(11,14,1,android.util.TypedValue.COMPLEX_UNIT_SP);sharingButton.setAutoSizeTextTypeUniformWithConfiguration(11,14,1,android.util.TypedValue.COMPLEX_UNIT_SP);
+        vpnButton.setTextSize(13);sharingButton.setTextSize(13);vpnButton.setGravity(Gravity.CENTER);sharingButton.setGravity(Gravity.CENTER);
         for(int i=0;i<2;i++){LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(0,dp(50),1);bp.topMargin=dp(4);bp.gravity=Gravity.CENTER_VERTICAL;if(i==0)bp.setMarginEnd(dp(8));actions.getChildAt(i).setLayoutParams(bp);}
         LinearLayout stats=card();stats.setOrientation(LinearLayout.HORIZONTAL);
         receivedValue=statCell(stats,getString(R.string.ui_received));shareValue=statCell(stats,getString(R.string.ui_sent));clientsValue=statCell(stats,getString(R.string.ui_connected_label));
